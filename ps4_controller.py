@@ -7,14 +7,13 @@ import typing as T
 import numpy as np
 
 from collections import defaultdict
-from scipy import signal
 
 class PS4Controller:
-    # buttons
+    # buttons configuration on Windows
     X = 0
     O = 1
-    TRIANGLE = 2
-    SQUARE = 3
+    SQUARE = 2
+    TRIANGLE = 3
 
     def __init__(self,
                  joystick_id: int = 0,

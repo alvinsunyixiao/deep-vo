@@ -71,8 +71,8 @@ if __name__ == "__main__":
             with CLIENT_LOCK:
                 kinematics = client.simGetGroundTruthKinematics()
                 client.moveByRollPitchYawrateThrottleAsync(
-                    roll=controller.axes[3] * .6,
-                    pitch=-controller.axes[4] * .6,
+                    roll=controller.axes[2] * .6,
+                    pitch=-controller.axes[3] * .6,
                     yaw_rate=-controller.axes[0] * 2.,
                     throttle=(-controller.axes[1] + 1) / 2,
                     duration=0.2,
