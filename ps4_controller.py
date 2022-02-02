@@ -15,13 +15,8 @@ class PS4Controller:
     SQUARE = 2
     TRIANGLE = 3
 
-    def __init__(self,
-                 joystick_id: int = 0,
-                 num_filt_taps: int = 31,
-                 sample_freq: int = 100):
+    def __init__(self, joystick_id: int = 0):
         self.joystick_id = joystick_id
-        self.num_filt_taps = num_filt_taps
-        self.sample_freq = sample_freq
         self.terminate_evt = threading.Event()
         self.axes = defaultdict(float)
         self.buttons = defaultdict(bool)
