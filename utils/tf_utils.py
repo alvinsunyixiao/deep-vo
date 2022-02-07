@@ -30,19 +30,20 @@ class ShardedTFRecordWriter:
         self._sample_cnt = 0
 
     def __enter__(self):
-        self._writer = tf.io.TFRecordWriter(
-            os.path.join(self.output_dir, f"shard-{self._shard_cnt}.tfrecord"))
+        self._writer = None
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._shard_cnt += 1
-        self._writer.close()
+        if self._writer is not None:
+            self._shard_cnt += 1
+            self._writer.close()
 
     def write(self, record):
-        self._writer.write(record)
-        self._sample_cnt += 1
         if self._sample_cnt % self.shard_size == 0:
-            self._writer.close()
-            self._shard_cnt += 1
+            if self._writer is not None:
+                self._writer.close()
             self._writer = tf.io.TFRecordWriter(
                 os.path.join(self.output_dir, f"shard-{self._shard_cnt}.tfrecord"))
+            self._shard_cnt += 1
+        self._writer.write(record)
+        self._sample_cnt += 1
 
