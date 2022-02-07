@@ -10,8 +10,8 @@ from collections import defaultdict
 from skimage import io
 from tqdm import tqdm
 
-from pose3d import RandomPose3DGen, Pose3D
-from tf_utils import set_tf_memory_growth, tensor_to_feature, ShardedTFRecordWriter
+from utils.pose3d import RandomPose3DGen, Pose3D
+from utils.tf_utils import set_tf_memory_growth, tensor_to_feature, ShardedTFRecordWriter
 
 def parse_args():
     parser = argparse.ArgumentParser()

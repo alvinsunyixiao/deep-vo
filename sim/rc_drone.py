@@ -7,7 +7,7 @@ import os
 
 import numpy as np
 
-from ps4_controller import PS4Controller
+from utils.ps4_controller import PS4Controller
 
 CLIENT_LOCK = threading.Lock()
 
