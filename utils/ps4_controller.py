@@ -1,3 +1,4 @@
+import platform
 import pygame
 import queue
 import time
@@ -12,8 +13,13 @@ class PS4Controller:
     # buttons configuration on Windows
     X = 0
     O = 1
-    SQUARE = 2
-    TRIANGLE = 3
+    SQUARE = 2 if platform.system() == "Windows" else 3
+    TRIANGLE = 3 if platform.system() == "Windows" else 2
+
+    LEFT_UD = 1
+    LEFT_LR = 0
+    RIGHT_LR = 2 if platform.system() == "Windows" else 3
+    RIGHT_UD = 3 if platform.system() == "Windows" else 4
 
     def __init__(self, joystick_id: int = 0):
         self.joystick_id = joystick_id
