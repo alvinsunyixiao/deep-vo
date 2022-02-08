@@ -28,16 +28,20 @@ class Rot3D:
 
     @property
     def shape(self) -> T.Tuple[int, ...]:
-        return self.quat.shape[:-1]
+        return tf.shape(self.quat)[:-1]
 
     def to_so3(self) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
         return a * theta
 
     def to_airsim(self) -> airsim.Quaternionr:
-        assert self.shape == (), "convertion to airsim only supports single pose"
+        tf.assert_equal(self.shape, tf.cast((), tf.int32),
+                        "convertion to airsim only supports single pose")
         q = self.quat.numpy().astype(float)
         return airsim.Quaternionr(q[0], q[1], q[2], q[3])
+
+    def flatten(self) -> Rot3D:
+        return Rot3D(tf.reshape(self.quat, (-1, 4)))
 
     def __repr__(self) -> str:
         return f"Rot3D(quaternion={self.quat.numpy()})"
@@ -86,6 +90,12 @@ class Pose3D:
     def shape(self) -> T.Tuple[int, ...]:
         return self.R.shape
 
+    def flatten(self) -> Pose3D:
+        return Pose3D(
+            orientation=self.R.flatten(),
+            position=tf.reshape(self.t, (-1, 3)),
+        )
+
     def __matmul__(self, other: T.Union[Pose3D, tf.Tensor]) -> T.Union[Pose3D, tf.Tensor]:
         if isinstance(other, Pose3D):
             return Pose3D(
@@ -99,8 +109,7 @@ class Pose3D:
 
     def to_se3(self) -> tf.Tensor:
         w = self.R.to_so3()
-        V_inv = np.eye(3)
-        theta = np.linalg.norm(w, axis=-1, keepdims=True)
+        theta = tf.linalg.norm(w, axis=-1, keepdims=True)
         t = self.t
         wt = tf.linalg.cross(w, t)
         wwt = tf.linalg.cross(w, wt)
@@ -116,7 +125,8 @@ class Pose3D:
         return tf.concat([self.R.quat, self.t], axis=-1)
 
     def to_airsim(self) -> airsim.Pose:
-        assert self.shape == (), "convertion to airsim only supports single pose"
+        tf.assert_equal(self.shape, tf.cast((), tf.int32),
+                        "convertion to airsim only supports single pose")
         t = self.t.numpy().astype(float)
 
         return airsim.Pose(
@@ -146,7 +156,7 @@ class Pose3D:
 
     @classmethod
     def from_storage(cls, storage: T.Union[tf.Tensor, np.ndarray]) -> Pose3D:
-        tf.assert_equal(storage.shape[-1], 7), "Pose3D storage are size-7 vectors"
+        tf.assert_equal(tf.shape(storage)[-1], 7), "Pose3D storage are size-7 vectors"
         return Pose3D(
             orientation=Rot3D(storage[..., :4]),
             position=storage[..., 4:],
@@ -157,7 +167,7 @@ class Pose3D:
         tf.assert_equal(tf.shape(se3)[-1], 6, "se3 vectors must be size-6")
         t = se3[..., :3]
         w = se3[..., 3:]
-        theta = np.linalg.norm(w, axis=-1, keepdims=True)
+        theta = tf.linalg.norm(w, axis=-1, keepdims=True)
 
         wt = tf.linalg.cross(w, t)
         wwt = tf.linalg.cross(w, wt)
