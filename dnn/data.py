@@ -79,7 +79,7 @@ class VODataPipe:
         c1_T_c2 = w_T_c1.inv() @ w_T_c2
 
         # convert to model input / output
-        x = tf.concat([image1, image2], axis=-1)
+        x = {"image1": image1, "image2": image2}
         y = c1_T_c2.to_se3()
 
         return x, y
@@ -107,7 +107,7 @@ class VODataPipe:
         c1_T_c2 = w_T_c1.inv() @ w_T_c2
 
         # convert to model input / output (batched)
-        x = tf.concat([images1_mhw3, images2_mhw3], axis=-1)
+        x = {"image1": images1_mhw3, "image2": images2_mhw3}
         y = c1_T_c2.to_se3()
 
         return x, y
