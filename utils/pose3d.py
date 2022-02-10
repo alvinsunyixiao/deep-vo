@@ -30,9 +30,10 @@ class Rot3D:
     def shape(self) -> T.Tuple[int, ...]:
         return tf.shape(self.quat)[:-1]
 
-    def to_so3(self) -> tf.Tensor:
+    def to_so3(self, eps: float = 1e-4) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
-        return a * theta
+        w = a * theta
+        return tf.where(theta < eps, x=tf.zeros_like(w), y=w)
 
     def to_airsim(self) -> airsim.Quaternionr:
         tf.assert_equal(self.shape, tf.cast((), tf.int32),
@@ -54,11 +55,13 @@ class Rot3D:
         return Rot3D(tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), size + (4,)))
 
     @classmethod
-    def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray]) -> Rot3D:
+    def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-4) -> Rot3D:
         theta = tf.linalg.norm(so3, axis=-1, keepdims=True)
         axis = tf.math.divide_no_nan(so3, theta)
+        q = quaternion.from_axis_angle(axis, theta)
+        q_eye = tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), tf.shape(q))
 
-        return Rot3D(quaternion.from_axis_angle(axis, theta))
+        return Rot3D(tf.where(theta < eps, x=q_eye, y=q))
 
     @classmethod
     def from_airsim(cls, quaternion: airsim.Quaternionr) -> Rot3D:
@@ -107,19 +110,24 @@ class Pose3D:
             tf.assert_equal(tf.shape(other)[:-1], self.shape(), "batch dimensions do not match")
             return self.R @ other + self.t
 
-    def to_se3(self) -> tf.Tensor:
-        w = self.R.to_so3()
+    def to_se3(self, eps: float = 1e-4) -> tf.Tensor:
+        w = self.R.to_so3(eps)
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
         t = self.t
         wt = tf.linalg.cross(w, t)
         wwt = tf.linalg.cross(w, wt)
-        t_safe = t - .5 * wt + \
+        tp = t - .5 * wt + \
             tf.math.divide_no_nan(
                 (1 - tf.math.divide_no_nan(theta * tf.cos(theta / 2), 2 * tf.sin(theta / 2))),
                 theta**2,
             ) * wwt
+        t_safe = tf.where(theta < eps, x=t, y=tp)
 
         return tf.concat([t_safe, w], axis=-1)
+
+    def to_pseudo_se3(self) -> tf.Tensor:
+        w = self.R.to_so3()
+        return tf.concat([self.t, w], axis=-1)
 
     def to_storage(self) -> tf.Tensor:
         return tf.concat([self.R.quat, self.t], axis=-1)
@@ -163,7 +171,7 @@ class Pose3D:
         )
 
     @classmethod
-    def from_se3(cls, se3: T.Union[tf.Tensor, np.ndarray]) -> Pose3D:
+    def from_se3(cls, se3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-4) -> Pose3D:
         tf.assert_equal(tf.shape(se3)[-1], 6, "se3 vectors must be size-6")
         t = se3[..., :3]
         w = se3[..., 3:]
@@ -171,12 +179,13 @@ class Pose3D:
 
         wt = tf.linalg.cross(w, t)
         wwt = tf.linalg.cross(w, wt)
-        t_safe = t + tf.math.divide_no_nan(1 - tf.cos(theta), theta**2) * wt + \
+        tp = t + tf.math.divide_no_nan(1 - tf.cos(theta), theta**2) * wt + \
                 tf.math.divide_no_nan(theta - tf.sin(theta), theta**3) * wwt
+        t_safe = tf.where(theta < eps, x=t, y=tp)
 
         return Pose3D(
             position=t_safe,
-            orientation=Rot3D.from_so3(w),
+            orientation=Rot3D.from_so3(w, eps),
         )
 
     @classmethod

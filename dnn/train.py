@@ -5,6 +5,7 @@ import time
 import tensorflow as tf
 import tensorflow.keras as tfk
 
+from utils.tf_utils import set_tf_memory_growth
 from dnn.data import VODataPipe
 from dnn.model import DeepPose
 
@@ -21,6 +22,8 @@ def get_session_dir(root: str) -> str:
     return os.path.join(root, time.strftime("sess_%m-%d-%y_%H-%M-%S"))
 
 if __name__ == "__main__":
+    set_tf_memory_growth(True)
+
     args = parse_args()
     sess_dir = get_session_dir(args.output)
 
@@ -32,7 +35,7 @@ if __name__ == "__main__":
     # load from checkpoint if provided
     if args.load is not None:
         model.load_weights(args.load)
-    model.compile(tfk.optimizers.Adam(3e-4, clipnorm=10.0))
+    model.compile(tfk.optimizers.Adam(1e-5))
 
     model.fit(
         x=train_ds,
