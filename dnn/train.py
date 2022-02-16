@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import time
 
@@ -12,8 +13,11 @@ from utils.tf_utils import set_tf_memory_growth
 
 def default_lr_schedule(epoch: int) -> float:
     # warm start
-    if epoch < 200:
-        return epoch / 200 * (1e-3 - 1e-6) + 1e-6
+    warm_start_epoch = 300
+    if epoch < warm_start_epoch:
+        low = math.log(1e-6)
+        high = math.log(1e-3)
+        return math.exp(epoch / warm_start_epoch * (high - low) + low)
     elif epoch < 1000:
         return 1e-3
     elif epoch < 1600:
@@ -56,7 +60,7 @@ if __name__ == "__main__":
     # load from checkpoint if provided
     if args.load is not None:
         model.load_weights(args.load)
-    model.compile(tfk.optimizers.Adam(1e-5))
+    model.compile("adam")
 
     model.fit(
         x=train_ds,

@@ -8,18 +8,16 @@ from tensorflow_probability import distributions as tfd
 from utils.params import ParamDict
 from utils.pose3d import Pose3D
 
-class SameConvBNReLU(tfk.layers.Layer):
+class SameConvReLU(tfk.layers.Layer):
     def __init__(self, filters, kernel, stride, **kwargs):
         super().__init__(**kwargs)
-        reg = tfk.regularizers.l2(1e-5)
+        reg = tfk.regularizers.l2(1e-4)
         self.conv = tfk.layers.Conv2D(filters, kernel, stride, "same",
                                       kernel_regularizer=reg, bias_regularizer=reg)
-        self.bn = tfk.layers.BatchNormalization()
         self.relu = tfk.layers.ReLU()
 
     def call(self, x):
         x = self.conv(x)
-        x = self.bn(x)
         x = self.relu(x)
 
         return x
@@ -27,23 +25,17 @@ class SameConvBNReLU(tfk.layers.Layer):
 class BaseModel(tfk.layers.Layer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.conv1 = SameConvBNReLU(16, 11, 2)
-        self.conv2 = SameConvBNReLU(32, 11, 2)
-        self.conv3 = SameConvBNReLU(64, 7, 2)
-        self.conv4 = SameConvBNReLU(128, 7, 2)
-        self.conv5 = SameConvBNReLU(256, 5, 2)
-        self.conv6 = SameConvBNReLU(512, 5, 2)
-        self.conv7 = SameConvBNReLU(1024, 3, 2)
+        self.conv = SameConvReLU(64, 7, 2)
+        vgg = tfk.applications.VGG16(
+            include_top=False,
+            weights="imagenet",
+        )
+        self.vgg = tfk.Model(vgg.layers[2].input, vgg.output)
 
 
     def call(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.conv5(x)
-        x = self.conv6(x)
-        x = self.conv7(x)
+        x = self.conv(x)
+        x = self.vgg(x)
 
         return x
 
@@ -64,7 +56,7 @@ class DeepPose(tfk.Model):
             kernel_initializer=tfk.initializers.random_normal(stddev=1e-3))
         self.pooling = tfk.layers.GlobalAvgPool2D()
 
-        self.bijector = tfb.FillScaleTriL(diag_bijector=tfb.Exp(), diag_shift=None)
+        self.bijector = tfb.FillScaleTriL()
 
     def call(self, inputs):
         image1 = inputs["image1"]
@@ -79,13 +71,14 @@ class DeepPose(tfk.Model):
         L = self.bijector.forward(x=L)
 
         # geometric loss
+        c1_T_q = Pose3D.from_se3(mu)
         w_T_c1 = Pose3D.from_storage(inputs["pose1"])
         w_T_c2 = Pose3D.from_storage(inputs["pose2"])
-        c1_T_c2 = w_T_c1.inv() @ w_T_c2
-        gt = c1_T_c2.to_se3()
+        w_T_q = w_T_c1 @ c1_T_q
+        c2_T_q = w_T_c2.inv() @ w_T_q
 
-        dist = tfd.MultivariateNormalTriL(loc=mu, scale_tril=L)
-        geo_loss = -dist.log_prob(gt)
+        dist = tfd.MultivariateNormalTriL(loc=tf.zeros_like(mu), scale_tril=L)
+        geo_loss = -dist.log_prob(c2_T_q.to_se3())
         geo_loss = tf.reduce_mean(geo_loss)
         self.add_loss(geo_loss)
         self.add_metric(geo_loss, name="Geometric Loss")

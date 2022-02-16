@@ -9,9 +9,9 @@ class VODataPipe:
 
     DEFAULT_PARAMS = ParamDict(
         data_root = "/data/tfrecords/deep_vo",
-        num_parallel_reads = 32,
-        num_parallel_calls = 4,
-        batch_size = 128,
+        num_parallel_reads = 16,
+        num_parallel_calls = 8,
+        batch_size = 64,
         num_perturb = 16,
         prefetch_size = 4,
         img_size = (144, 256),
