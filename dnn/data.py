@@ -11,7 +11,7 @@ class VODataPipe:
         data_root = "/data/tfrecords/deep_vo",
         num_parallel_reads = 16,
         num_parallel_calls = 8,
-        batch_size = 64,
+        batch_size = 128,
         num_perturb = 16,
         prefetch_size = 4,
         img_size = (144, 256),

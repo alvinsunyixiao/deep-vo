@@ -7,7 +7,7 @@ import tensorflow as tf
 import tensorflow.keras as tfk
 
 from dnn.data import VODataPipe
-from dnn.model import DeepPose
+from dnn.model import DeepPoseTrain
 from utils.params import ParamDict
 from utils.tf_utils import set_tf_memory_growth
 
@@ -56,8 +56,8 @@ if __name__ == "__main__":
     train_ds = data_pipe.build_train_ds()
     val_ds = data_pipe.build_val_ds()
 
-    model = DeepPose(p.model)
-    model.compile(tfk.optimizers.Adam(epsilon=1e-3))
+    model = DeepPoseTrain(p.model).build_model()
+    model.compile(tfk.optimizers.Adam(epsilon=1e-5, clipnorm=1.))
 
     initial_epoch = 0
     if args.resume is not None:
