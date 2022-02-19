@@ -28,6 +28,7 @@ def default_lr_schedule(epoch: int) -> float:
 TRAINER_DEFAULT_PARAMS = ParamDict(
     num_epochs=2000,
     log_freq=50,
+    save_freq=10,
     lr_schedule=default_lr_schedule,
 )
 
@@ -37,8 +38,8 @@ def parse_args():
                         help="path to load the parameter file")
     parser.add_argument("-o", "--output", type=str, required=True,
                         help="output directory to store checkpoints and logs")
-    parser.add_argument("-l", "--load", type=str, default=None,
-                        help="load weight from path")
+    parser.add_argument("-r", "--resume", type=str, default=None,
+                        help="resume from training session directory")
 
     return parser.parse_args()
 
@@ -50,25 +51,36 @@ if __name__ == "__main__":
 
     args = parse_args()
     p = ParamDict.from_file(args.params)
-    sess_dir = get_session_dir(args.output)
 
     data_pipe = VODataPipe(p.data)
     train_ds = data_pipe.build_train_ds()
     val_ds = data_pipe.build_val_ds()
 
     model = DeepPose(p.model)
-    # load from checkpoint if provided
-    if args.load is not None:
-        model.load_weights(args.load)
-    model.compile("adam")
+    model.compile(tfk.optimizers.Adam(epsilon=1e-3))
+
+    initial_epoch = 0
+    if args.resume is not None:
+        sess_dir = args.resume
+        ckpts_dir = os.path.join(sess_dir, "ckpts")
+        ckpts_files = os.listdir(ckpts_dir)
+        last_ckpt_file = max(ckpts_files, key=lambda f: int(f.split("-")[1]))
+        last_ckpt_file_path = os.path.join(ckpts_dir, last_ckpt_file)
+        initial_epoch = int(last_ckpt_file.split("-")[1])
+        print(f"Restored weights from {last_ckpt_file_path}")
+        model.load_weights(last_ckpt_file_path)
+    else:
+        sess_dir = get_session_dir(args.output)
 
     model.fit(
         x=train_ds,
         validation_data=val_ds,
         epochs=p.trainer.num_epochs,
+        initial_epoch=initial_epoch,
         callbacks=[
             tfk.callbacks.ModelCheckpoint(
-                os.path.join(sess_dir, "ckpts", "epoch-{epoch:02d}")
+                os.path.join(sess_dir, "ckpts", "epoch-{epoch:03d}"),
+                period=p.trainer.save_freq,
             ),
             tfk.callbacks.TensorBoard(
                 log_dir=os.path.join(sess_dir, "logs"),
@@ -76,6 +88,6 @@ if __name__ == "__main__":
                 profile_batch=0,
                 histogram_freq=1,
             ),
-            tfk.callbacks.LearningRateScheduler(p.trainer.lr_schedule, verbose=1),
+            tfk.callbacks.LearningRateScheduler(p.trainer.lr_schedule),
         ],
     )
