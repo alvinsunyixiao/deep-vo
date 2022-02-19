@@ -39,8 +39,6 @@ class SameConvBnRelu(tfk.layers.Layer):
 
         self.bn = tfk.layers.BatchNormalization(
             axis=1 if tfk.backend.image_data_format() == "channels_first" else -1,
-            momentum=0.9,
-            epsilon=1e-5,
             name="bn",
         ) if has_bn else None
 
