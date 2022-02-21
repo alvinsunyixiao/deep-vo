@@ -4,12 +4,11 @@ import tensorflow as tf
 import tensorflow.keras as tfk
 import typing as T
 
-from tensorflow_probability import bijectors as tfb
-from tensorflow_probability import distributions as tfd
-
 from utils.params import ParamDict
 from utils.pose3d import Pose3D
 from utils.tf_utils import set_tf_memory_growth
+
+from tensorflow_probability import distributions as tfd
 
 class SameConvBnRelu(tfk.layers.Layer):
     def __init__(self,
@@ -33,12 +32,16 @@ class SameConvBnRelu(tfk.layers.Layer):
             strides=strides,
             padding="same",
             kernel_initializer="he_normal",
+            kernel_regularizer=tfk.regularizers.l2(1e-4),
+            bias_regularizer=tfk.regularizers.l2(1e-4),
             name="conv",
             use_bias=not has_bn,
         )
 
         self.bn = tfk.layers.BatchNormalization(
             axis=1 if tfk.backend.image_data_format() == "channels_first" else -1,
+            momentum=0.9,
+            epsilon=1e-5,
             name="bn",
         ) if has_bn else None
 
@@ -171,14 +174,12 @@ class DeepPose:
         self.group3 = ResidualGroup(2, 128, name="group3")
         self.group4 = ResidualGroup(2, 192, name="group4")
         self.group5 = ResidualGroup(2, 256, name="group5")
-        self.group6 = ResidualGroup(2, 512, name="group6")
+        self.group6 = ResidualGroup(2, 384, name="group6")
 
         self.flatten = tfk.layers.Flatten()
 
-        self.fc_mu = tfk.layers.Dense(6,
-            kernel_initializer=tfk.initializers.random_normal(stddev=1e-3), name="fc_mu")
-        self.fc_sigma = tfk.layers.Dense(6,
-            kernel_initializer=tfk.initializers.random_normal(stddev=1e-3), activation="exponential", name="fc_sigma")
+        self.fc_mu = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-4), name="fc_mu")
+        self.fc_sigma = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-4), activation="exponential", name="fc_sigma")
 
     def build_model(self) -> tfk.Model:
         image1 = tfk.layers.Input((144, 256, 3), name="image1")
@@ -196,6 +197,7 @@ class DeepPose:
         x = self.group6(x)
 
         x = self.flatten(x)
+
         mu = self.fc_mu(x)
         sigma = self.fc_sigma(x)
 
