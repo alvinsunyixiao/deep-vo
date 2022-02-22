@@ -12,18 +12,12 @@ from utils.params import ParamDict
 from utils.tf_utils import set_tf_memory_growth
 
 def default_lr_schedule(epoch: int) -> float:
-    # warm start
-    warm_start_epoch = 300
-    if epoch < warm_start_epoch:
-        low = math.log(1e-6)
-        high = math.log(1e-3)
-        return math.exp(epoch / warm_start_epoch * (high - low) + low)
-    elif epoch < 1000:
-        return 1e-3
+    if epoch < 1000:
+        return 3e-5
     elif epoch < 1600:
-        return 1e-4
-    elif epoch < 2000:
         return 1e-5
+    else:
+        return 1e-6
 
 TRAINER_DEFAULT_PARAMS = ParamDict(
     num_epochs=2000,
