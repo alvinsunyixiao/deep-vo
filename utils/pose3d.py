@@ -7,7 +7,7 @@ import numpy as np
 import typing as T
 import tensorflow as tf
 
-from tensorflow_graphics.geometry.transformation import quaternion, axis_angle
+from tensorflow_graphics.geometry.transformation import quaternion, axis_angle, rotation_matrix_3d
 
 class Rot3D:
     """
@@ -35,6 +35,9 @@ class Rot3D:
         w = a * theta
         return tf.where(theta < eps, x=tf.zeros_like(w), y=w)
 
+    def to_matrix(self) -> tf.Tensor:
+        return rotation_matrix_3d.from_quaternion(self.quat)
+
     def to_airsim(self) -> airsim.Quaternionr:
         tf.assert_equal(self.shape, tf.cast((), tf.int32),
                         "convertion to airsim only supports single pose")
@@ -53,6 +56,10 @@ class Rot3D:
     @classmethod
     def identity(cls, size: T.Tuple[int, ...] = ()) -> Rot3D:
         return Rot3D(tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), size + (4,)))
+
+    @classmethod
+    def from_matrix(cls, rot_mat: tf.Tensor) -> Rot3D:
+        return Rot3D(quaternion.from_rotation_matrix(rot_mat))
 
     @classmethod
     def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-4) -> Rot3D:
