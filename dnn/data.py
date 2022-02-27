@@ -13,7 +13,7 @@ class VODataPipe:
         num_parallel_calls = 8,
         batch_size = 128,
         num_perturb = 16,
-        prefetch_size = 4,
+        prefetch_size = 32,
         img_size = (144, 256),
     )
 
