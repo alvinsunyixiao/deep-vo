@@ -3,6 +3,7 @@ import os
 import tensorflow as tf
 import typing as T
 
+from utils.pose3d import Pose3D
 from utils.params import ParamDict
 
 class VODataPipe:
@@ -40,6 +41,15 @@ class VODataPipe:
 
         return ds
 
+    def build_cal_ds(self) -> tf.data.Dataset:
+        file_pattern = os.path.join(self.p.data_root, "calibration", "*.tfrecord")
+        files = tf.data.Dataset.list_files(file_pattern, shuffle=False)
+        ds = tf.data.TFRecordDataset(files)
+        ds = ds.map(self._process_cal, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.batch(self.p.batch_size)
+
+        return ds
+
     def _parse_func(self, example_proto) -> T.Tuple[tf.Tensor, tf.Tensor]:
         # build feature descriptor
         locations = ["front", "back", "bottom"]
@@ -60,7 +70,19 @@ class VODataPipe:
         return images_k, poses_k7
 
     @tf.function
-    def _process_train(self, example_proto) -> T.Tuple[tf.Tensor, tf.Tensor]:
+    def _process_cal(self, example_proto) -> T.Tuple[T.Dict[str, tf.Tensor], tf.Tensor]:
+        data_dict = self._process_val(example_proto)
+        inputs = {"image1": data_dict["image1"], "image2": data_dict["image2"]}
+
+        w_T_c1 = Pose3D.from_storage(data_dict["pose1"])
+        w_T_c2 = Pose3D.from_storage(data_dict["pose2"])
+        c1_T_c2 = w_T_c1.inv() @ w_T_c2
+        y = c1_T_c2.to_se3()
+
+        return inputs, y
+
+    @tf.function
+    def _process_train(self, example_proto) -> T.Dict[str, tf.Tensor]:
         images_k, poses_k7 = self._parse_func(example_proto)
 
         # randomly pick two perturbed poses
@@ -82,7 +104,7 @@ class VODataPipe:
         }
 
     @tf.function
-    def _process_val(self, example_proto) -> T.Tuple[tf.Tensor, tf.Tensor]:
+    def _process_val(self, example_proto) -> T.Dict[str, tf.Tensor]:
         images_k, poses_k7 = self._parse_func(example_proto)
 
         # combine image pairs

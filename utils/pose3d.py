@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-#import airsim
 import functools
 
 import numpy as np
@@ -38,12 +37,6 @@ class Rot3D:
     def to_matrix(self) -> tf.Tensor:
         return rotation_matrix_3d.from_quaternion(self.quat)
 
-    def to_airsim(self) -> airsim.Quaternionr:
-        tf.assert_equal(self.shape, tf.cast((), tf.int32),
-                        "convertion to airsim only supports single pose")
-        q = self.quat.numpy().astype(float)
-        return airsim.Quaternionr(q[0], q[1], q[2], q[3])
-
     def flatten(self) -> Rot3D:
         return Rot3D(tf.reshape(self.quat, (-1, 4)))
 
@@ -69,10 +62,6 @@ class Rot3D:
         q_eye = tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), tf.shape(q))
 
         return Rot3D(tf.where(theta < eps, x=q_eye, y=q))
-
-    @classmethod
-    def from_airsim(cls, quaternion: airsim.Quaternionr) -> Rot3D:
-        return Rot3D(quaternion.to_numpy_array())
 
     @classmethod
     def random(cls, max_angle: T.Union[float, tf.Tensor], size: T.Tuple[int, ...] = ()) -> Rot3D:
@@ -139,16 +128,6 @@ class Pose3D:
     def to_storage(self) -> tf.Tensor:
         return tf.concat([self.R.quat, self.t], axis=-1)
 
-    def to_airsim(self) -> airsim.Pose:
-        tf.assert_equal(self.shape, tf.cast((), tf.int32),
-                        "convertion to airsim only supports single pose")
-        t = self.t.numpy().astype(float)
-
-        return airsim.Pose(
-            position_val=airsim.Vector3r(t[0], t[1], t[2]),
-            orientation_val=self.R.to_airsim(),
-        )
-
     def __repr__(self) -> str:
         return f"Pose3D(position={self.t.numpy()}, orientation={self.R})"
 
@@ -160,13 +139,6 @@ class Pose3D:
         return Pose3D(
             orientation=Rot3D.identity(size),
             position=tf.zeros(size + (3,)),
-        )
-
-    @classmethod
-    def from_airsim(cls, pose: airsim.Pose) -> Pose3D:
-        return Pose3D(
-            orientation=Rot3D.from_airsim(pose.orientation),
-            position=pose.position.to_numpy_array(),
         )
 
     @classmethod

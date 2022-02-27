@@ -160,7 +160,9 @@ class ResidualGroup(tfk.layers.Layer):
 
 class DeepPose:
 
-    DEFAULT_PARAMS=ParamDict()
+    DEFAULT_PARAMS=ParamDict(
+        batch_size=None,
+    )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
         self.p = params
@@ -182,8 +184,8 @@ class DeepPose:
         self.fc_sigma = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-4), activation="exponential", name="fc_sigma")
 
     def build_model(self) -> tfk.Model:
-        image1 = tfk.layers.Input((144, 256, 3), name="image1")
-        image2 = tfk.layers.Input((144, 256, 3), name="image2")
+        image1 = tfk.layers.Input((144, 256, 3), batch_size=self.p.batch_size, name="image1")
+        image2 = tfk.layers.Input((144, 256, 3), batch_size=self.p.batch_size, name="image2")
         images = self.concat([image1, image2])
 
         x = self.conv1(images)

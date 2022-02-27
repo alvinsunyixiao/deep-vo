@@ -8,6 +8,7 @@ import os
 import numpy as np
 
 from utils.ps4_controller import PS4Controller
+from sim.randomize import randomize_time, randomize_weather
 
 CLIENT_LOCK = threading.Lock()
 
@@ -21,33 +22,6 @@ def create_trajectory_filepath(base_dir):
     filename = time.strftime("%y-%m-%d_%H-%M-%S.pkl")
     return os.path.join(base_dir, filename)
 
-def randomize_time(client: airsim.VehicleClient):
-    now = datetime.datetime.now()
-    delta_h = np.random.uniform(-12, 12)
-    delta_time = datetime.timedelta(hours=delta_h)
-    random_time = now + delta_time
-    print(f"Randomized time: {random_time}")
-    with CLIENT_LOCK:
-        client.simSetTimeOfDay(True, random_time.strftime("%Y-%m-%d %H:%M:%S"), update_interval_secs=5)
-
-def randomize_weather(client: airsim.VehicleClient):
-    with CLIENT_LOCK:
-        client.simSetWeatherParameter(airsim.WeatherParameter.Rain,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.Roadwetness,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.Snow,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.RoadSnow,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.MapleLeaf,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.RoadLeaf,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.Dust,
-                                      min(np.random.exponential(0.1), 1))
-        client.simSetWeatherParameter(airsim.WeatherParameter.Fog,
-                                      min(np.random.exponential(0.1), 1))
 
 if __name__ == "__main__":
     args = parse_args()
@@ -63,8 +37,10 @@ if __name__ == "__main__":
     client.simEnableWeather(True)
 
     controller = PS4Controller()
-    controller.register_button_callback(controller.O, lambda: randomize_weather(client))
-    controller.register_button_callback(controller.TRIANGLE, lambda: randomize_time(client))
+    controller.register_button_callback(controller.O,
+        lambda: randomize_weather(client, client_lock=CLIENT_LOCK))
+    controller.register_button_callback(controller.TRIANGLE,
+        lambda: randomize_time(client, client_lock=CLIENT_LOCK))
 
     with controller:
         while not controller.buttons[controller.X]:

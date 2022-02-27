@@ -12,6 +12,8 @@ from tqdm import tqdm
 
 from utils.pose3d import RandomPose3DGen, Pose3D
 from utils.tf_utils import set_tf_memory_growth, tensor_to_feature, ShardedTFRecordWriter
+from sim.randomize import randomize_weather
+from utils.airsim_utils import pose3d_to_airsim, airsim_to_pose3d
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -25,6 +27,12 @@ def parse_args():
                         help="avoid poses with surrounding obstacles closer than this distance")
     parser.add_argument("--shard-size", type=int, default=400,
                         help="number of samples per TFRecord shard")
+    parser.add_argument("--randomize", action="store_true",
+                        help="add this flag to perform wheather randomization")
+    parser.add_argument("--max-rotation", type=float, default=20.0,
+                        help="maximum rotational perturbation in [deg]")
+    parser.add_argument("--max-translation", type=float, default=0.5,
+                        help="maximum translational perturbation in [m]")
     return parser.parse_args()
 
 
@@ -51,7 +59,7 @@ if __name__ == "__main__":
     with tqdm(total=args.num_samples) as pbar, writer:
         while pbar.n < args.num_samples:
             base_pose = pose_gen()
-            client.simSetVehiclePose(base_pose.to_airsim(), True)
+            client.simSetVehiclePose(pose3d_to_airsim(base_pose), True)
 
             # check for surrounding distance
             time.sleep(0.05) # wait for distance sensor update
@@ -67,13 +75,18 @@ if __name__ == "__main__":
                 continue
 
             # generate some pose perturbation
-            perturbs = Pose3D.random(np.deg2rad(20), 0.5, (args.num_perturb,))
+            perturbs = Pose3D.random(
+                np.deg2rad(args.max_rotation), args.max_translation, (args.num_perturb,))
             poses = base_pose[None] @ perturbs
+
+            # randomize weather if specified
+            if args.randomize:
+                randomize_weather(client)
 
             # collect data
             datum = defaultdict(list)
             for i in range(args.num_perturb):
-                client.simSetVehiclePose(poses[i].to_airsim(), False)
+                client.simSetVehiclePose(pose3d_to_airsim(poses[i]), False)
                 responses = client.simGetImages([
                     airsim.ImageRequest("front_center", airsim.ImageType.Scene),
                     airsim.ImageRequest("back_center", airsim.ImageType.Scene),
@@ -88,7 +101,7 @@ if __name__ == "__main__":
                     # save poses
                     camera_pose = airsim.Pose(responses[i].camera_position,
                                               responses[i].camera_orientation)
-                    datum[f"{location}_poses"].append(Pose3D.from_airsim(camera_pose).to_storage())
+                    datum[f"{location}_poses"].append(airsim_to_pose3d(camera_pose).to_storage())
 
             # write to TFRecord
             feature = {}
