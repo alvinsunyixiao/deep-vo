@@ -65,10 +65,11 @@ class GeodesicLoss(tfk.layers.Layer):
         c2_T_q = w_T_c2.inv() @ w_T_q
 
         dist = tfd.MultivariateNormalDiag(loc=tf.zeros_like(mu), scale_diag=sigma)
-        loss = tf.reduce_mean(-dist.log_prob(c2_T_q.to_se3()))
+        loss = -dist.log_prob(c2_T_q.to_se3())
+        loss_reduced = tf.reduce_mean(loss)
 
-        self.add_loss(loss)
-        self.add_metric(loss, name="Geodesic Loss")
+        self.add_loss(loss_reduced)
+        self.add_metric(loss_reduced, name="Geodesic Loss")
 
         return loss
 
