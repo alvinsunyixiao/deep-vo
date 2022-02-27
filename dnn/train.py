@@ -51,7 +51,7 @@ if __name__ == "__main__":
     val_ds = data_pipe.build_val_ds()
 
     model = DeepPoseTrain(p.model).build_model()
-    model.compile(tfk.optimizers.Adam(epsilon=1e-5, clipnorm=1.))
+    model.compile(tfk.optimizers.Adam(epsilon=1e-4, clipnorm=2.))
 
     initial_epoch = 0
     if args.resume is not None:
@@ -79,7 +79,7 @@ if __name__ == "__main__":
             tfk.callbacks.TensorBoard(
                 log_dir=os.path.join(sess_dir, "logs"),
                 update_freq=p.trainer.log_freq,
-                profile_batch=0,
+                profile_batch=(100, 500),
                 histogram_freq=1,
             ),
             tfk.callbacks.LearningRateScheduler(p.trainer.lr_schedule),

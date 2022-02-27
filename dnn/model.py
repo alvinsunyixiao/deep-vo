@@ -18,13 +18,20 @@ class DeepPose:
         self.p = params
         self.concat = tfk.layers.Concatenate()
 
-        self.conv1 = tfk.layers.Conv2D(16, 7, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv1")
-        self.conv2 = tfk.layers.Conv2D(32, 7, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv2")
-        self.conv3 = tfk.layers.Conv2D(64, 5, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv3")
-        self.conv4 = tfk.layers.Conv2D(128, 5, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv4")
-        self.conv5 = tfk.layers.Conv2D(256, 3, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv5")
-        self.conv6 = tfk.layers.Conv2D(512, 3, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv6")
-        self.conv7 = tfk.layers.Conv2D(1024, 3, 2, "same", activation="relu", kernel_initializer="glorot_normal", name="conv7")
+        Conv2D = functools.partial(tfk.layers.Conv2D,
+            padding="same",
+            activation="elu",
+            kernel_initializer="glorot_normal",
+            kernel_regularizer=tfk.regularizers.l2(1e-4),
+            bias_regularizer=tfk.regularizers.l2(1e-4),
+        )
+        self.conv1 = Conv2D(16, 7, 2, name="conv1")
+        self.conv2 = Conv2D(32, 7, 2, name="conv2")
+        self.conv3 = Conv2D(64, 5, 2, name="conv3")
+        self.conv4 = Conv2D(128, 5, 2, name="conv4")
+        self.conv5 = Conv2D(256, 3, 2, name="conv5")
+        self.conv6 = Conv2D(512, 3, 2, name="conv6")
+        self.conv7 = Conv2D(1024, 3, 2, name="conv7")
 
         self.flatten = tfk.layers.Flatten()
 
