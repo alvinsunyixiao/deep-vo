@@ -7,7 +7,8 @@ import numpy as np
 import typing as T
 import tensorflow as tf
 
-from tensorflow_graphics.geometry.transformation import quaternion, axis_angle, rotation_matrix_3d
+from tensorflow_graphics.geometry.transformation import \
+    quaternion, axis_angle, rotation_matrix_3d, euler
 
 class Rot3D:
     """
@@ -37,6 +38,9 @@ class Rot3D:
 
     def to_matrix(self) -> tf.Tensor:
         return rotation_matrix_3d.from_quaternion(self.quat)
+
+    def to_euler(self) -> tf.Tensor:
+        return euler.from_quaternion(self.quat)
 
     def to_airsim(self) -> airsim.Quaternionr:
         tf.assert_equal(self.shape, tf.cast((), tf.int32),

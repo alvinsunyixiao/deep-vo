@@ -22,8 +22,8 @@ class DeepPose:
             padding="same",
             activation="elu",
             kernel_initializer="glorot_normal",
-            kernel_regularizer=tfk.regularizers.l2(1e-4),
-            bias_regularizer=tfk.regularizers.l2(1e-4),
+            kernel_regularizer=tfk.regularizers.l2(1e-5),
+            bias_regularizer=tfk.regularizers.l2(1e-5),
         )
         self.conv1 = Conv2D(16, 7, 2, name="conv1")
         self.conv2 = Conv2D(32, 7, 2, name="conv2")
