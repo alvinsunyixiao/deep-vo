@@ -22,7 +22,7 @@ def default_lr_schedule(epoch: int) -> float:
 TRAINER_DEFAULT_PARAMS = ParamDict(
     num_epochs=2000,
     log_freq=50,
-    save_freq=10,
+    save_freq=1,
     lr_schedule=default_lr_schedule,
 )
 

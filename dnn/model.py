@@ -10,54 +10,101 @@ from utils.tf_utils import set_tf_memory_growth
 
 from tensorflow_probability import distributions as tfd
 
+class ConvBlock(tfk.layers.Layer):
+    def __init__(self, filters: int, num_layers: int, **kwargs):
+        super().__init__(**kwargs)
+        self.num_layers = num_layers
+        self.convs = []
+        for i in range(num_layers):
+            self.convs.append(tfk.layers.Conv2D(
+                filters=filters,
+                kernel_size=3,
+                strides=1,
+                padding="same",
+                activation="relu",
+                kernel_initializer="glorot_normal",
+                kernel_regularizer=tfk.regularizers.l2(1e-4),
+                bias_regularizer=tfk.regularizers.l2(1e-4),
+                name=f"conv_{i}"
+            ))
+        self.pool = tfk.layers.MaxPool2D(
+            pool_size=(2, 2),
+            strides=(2, 2),
+            name="pool",
+        )
+
+    def call(self, x):
+        for conv in self.convs:
+            x = conv(x)
+        x = self.pool(x)
+
+        return x
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"num_layers": self.num_layers})
+
+        return config
+
+class MinVarEstimator(tfk.layers.Layer):
+    def call(self, inputs):
+        spatial_axes = (1, 2)
+        mus, sigmas = inputs
+        variances = tf.square(sigmas)
+        inv_variances = 1. / variances
+        inv_variances_sum = tf.reduce_sum(inv_variances, axis=spatial_axes, keepdims=True)
+        weights = inv_variances / inv_variances_sum
+
+        mu = tf.reduce_sum(mus * weights, axis=spatial_axes)
+        variance = 1. / tf.squeeze(inv_variances_sum)
+
+        return mu, tf.sqrt(variance)
+
 class DeepPose:
 
     DEFAULT_PARAMS=ParamDict()
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
+        tfk.backend.set_image_data_format("channels_first")
+
         self.p = params
-        self.concat = tfk.layers.Concatenate()
-
-        Conv2D = functools.partial(tfk.layers.Conv2D,
-            padding="same",
-            activation="elu",
-            kernel_initializer="glorot_normal",
-            kernel_regularizer=tfk.regularizers.l2(1e-5),
-            bias_regularizer=tfk.regularizers.l2(1e-5),
+        self.concat = tfk.layers.Concatenate(
+            axis=-1 if tfk.backend.image_data_format() == "channels_last" else 1
         )
-        self.conv1 = Conv2D(16, 7, 2, name="conv1")
-        self.conv2 = Conv2D(32, 7, 2, name="conv2")
-        self.conv3 = Conv2D(64, 5, 2, name="conv3")
-        self.conv4 = Conv2D(128, 5, 2, name="conv4")
-        self.conv5 = Conv2D(256, 3, 2, name="conv5")
-        self.conv6 = Conv2D(512, 3, 2, name="conv6")
-        self.conv7 = Conv2D(1024, 3, 2, name="conv7")
 
-        self.flatten = tfk.layers.Flatten()
+        self.block1 = ConvBlock(64, 2, name="block1")
+        self.block2 = ConvBlock(128, 2, name="block2")
+        self.block3 = ConvBlock(256, 3, name="block3")
+        self.block4 = ConvBlock(512, 3, name="block4")
+        self.block5 = ConvBlock(512, 3, name="block5")
 
-        self.fc_mu = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-3), name="fc_mu")
-        self.fc_sigma = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-3), activation="exponential", name="fc_sigma")
+        small_init = tfk.initializers.random_normal(stddev=1e-3)
+        self.conv_mu = tfk.layers.Conv2D(6, 1, 1, kernel_initializer=small_init, name="conv_mu")
+        self.conv_sigma = tfk.layers.Conv2D(6, 1, 1, kernel_initializer=small_init, name="conv_sigma")
+        self.nnelu = tfk.layers.Lambda(lambda x: tf.nn.elu(x) + 1., name="nnelu")
+
+        self.estimator = MinVarEstimator(name="min_var_estimator")
 
     def build_model(self) -> tfk.Model:
-        image1 = tfk.layers.Input((144, 256, 3), name="image1")
-        image2 = tfk.layers.Input((144, 256, 3), name="image2")
+        image1 = tfk.layers.Input((3, 144, 256), name="image1")
+        image2 = tfk.layers.Input((3, 144, 256), name="image2")
         images = self.concat([image1, image2])
 
-        x = self.conv1(images)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.conv5(x)
-        x = self.conv6(x)
-        x = self.conv7(x)
+        x = self.block1(images)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.block5(x)
 
-        x = self.flatten(x)
+        mus = self.conv_mu(x)
+        sigmas = self.nnelu(self.conv_sigma(x))
+        mus = tfk.layers.Permute((2, 3, 1))(mus)
+        sigmas = tfk.layers.Permute((2, 3, 1))(sigmas)
 
-        mu = self.fc_mu(x)
-        sigma = self.fc_sigma(x)
+        mu, sigma = self.estimator((mus, sigmas))
 
         inputs = {"image1": image1, "image2": image2}
-        outputs = {"mu": mu, "sigma": sigma}
+        outputs = {"mu": mu, "sigma": sigma, "spatial_mus": mus, "spatial_sigmas": sigmas}
 
         return tfk.Model(inputs=inputs, outputs=outputs)
 
@@ -73,10 +120,6 @@ class GeodesicLoss(tfk.layers.Layer):
 
         dist = tfd.MultivariateNormalDiag(loc=tf.zeros_like(mu), scale_diag=sigma)
         loss = -dist.log_prob(c2_T_q.to_se3())
-        loss_reduced = tf.reduce_mean(loss)
-
-        self.add_loss(loss_reduced)
-        self.add_metric(loss_reduced, name="Geodesic Loss")
 
         return loss
 
@@ -92,14 +135,30 @@ class DeepPoseTrain(DeepPose):
             "pose2": tfk.layers.Input((7,), name="pose2"),
         }
 
-        loss = GeodesicLoss()((
+        loss_est = GeodesicLoss()((
             deep_pose.output["mu"],
             deep_pose.output["sigma"],
             inputs["pose1"],
             inputs["pose2"],
         ))
 
-        return tfk.Model(inputs=inputs, outputs=loss)
+        loss_spatial = GeodesicLoss()((
+            deep_pose.output["spatial_mus"],
+            deep_pose.output["spatial_sigmas"],
+            inputs["pose1"][:, tf.newaxis, tf.newaxis],
+            inputs["pose2"][:, tf.newaxis, tf.newaxis],
+        ))
+
+        model = tfk.Model(inputs=inputs, outputs={"estimator": loss_est, "spatial": loss_spatial})
+
+        loss_est = tf.reduce_mean(loss_est)
+        loss_spatial = tf.reduce_mean(loss_spatial)
+        model.add_metric(loss_est, name="Estimator Loss")
+        model.add_metric(loss_spatial, name="Spatial Loss")
+        model.add_loss(loss_est)
+        model.add_loss(loss_spatial)
+
+        return model
 
 if __name__ == "__main__":
     set_tf_memory_growth()

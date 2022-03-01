@@ -28,7 +28,7 @@ class VODataPipe:
         file_pattern = os.path.join(self.p.data_root, "train", "*.tfrecord")
         files = tf.data.Dataset.list_files(file_pattern)
         ds = files.interleave(self._train_interleave,
-            cycle_length=32,
+            cycle_length=48,
             num_parallel_calls=self.p.num_parallel_calls,
             deterministic=False,
         )
@@ -50,7 +50,7 @@ class VODataPipe:
 
     def _train_interleave(self, file: tf.Tensor) -> tf.data.Dataset:
         ds = tf.data.TFRecordDataset(file)
-        ds = ds.map(self._process_train)
+        ds = ds.map(self._process_train, num_parallel_calls=4)
         ds = ds.unbatch()
 
         return ds
@@ -58,6 +58,7 @@ class VODataPipe:
     def _parse_single_image(self, img_str: tf.Tensor) -> tf.Tensor:
         image = tf.image.decode_image(img_str, channels=3)
         image.set_shape(self.p.img_size + (3,))
+        image = tf.transpose(image, (2, 0, 1))
 
         return tf.cast(image, tf.float32) / 127.5 - 1.
 
