@@ -10,15 +10,16 @@ from utils.pose3d import Pose3D
 class VODataPipe:
 
     DEFAULT_PARAMS = ParamDict(
-        data_root = "/data/tfrecords/deep_vo",
+        data_root = "/mnt/data/deep_vo_large",
         num_parallel_calls = 12,
-        batch_size = 128,
+        batch_size = 32,
         num_perturb = 16,
-        prefetch_size = 32,
+        prefetch_size = 4,
         shuffle_size = 512,
         img_size = (144, 256),
         # maximum looking up pitch in degrees
         max_pitch_up = 30,
+        cycle_length = 16,
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
@@ -28,7 +29,7 @@ class VODataPipe:
         file_pattern = os.path.join(self.p.data_root, "train", "*.tfrecord")
         files = tf.data.Dataset.list_files(file_pattern)
         ds = files.interleave(self._train_interleave,
-            cycle_length=48,
+            cycle_length=self.p.cycle_length,
             num_parallel_calls=self.p.num_parallel_calls,
             deterministic=False,
         )

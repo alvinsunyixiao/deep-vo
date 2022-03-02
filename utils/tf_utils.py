@@ -4,6 +4,10 @@ import typing as T
 import numpy as np
 import tensorflow as tf
 
+def set_mixed_precision():
+    policy = tf.keras.mixed_precision.Policy("mixed_float16")
+    tf.keras.mixed_precision.set_global_policy(policy)
+
 def set_tf_memory_growth(mode: bool = True):
     gpus = tf.config.list_physical_devices("GPU")
     for gpu in gpus:

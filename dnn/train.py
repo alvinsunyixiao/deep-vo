@@ -9,18 +9,18 @@ import tensorflow.keras as tfk
 from dnn.data import VODataPipe
 from dnn.model import DeepPoseTrain
 from utils.params import ParamDict
-from utils.tf_utils import set_tf_memory_growth
+from utils.tf_utils import set_tf_memory_growth, set_mixed_precision
 
 def default_lr_schedule(epoch: int) -> float:
-    if epoch < 1000:
-        return 3e-5
-    elif epoch < 1600:
+    if epoch < 100:
+        return 1e-4
+    elif epoch < 150:
         return 1e-5
     else:
         return 1e-6
 
 TRAINER_DEFAULT_PARAMS = ParamDict(
-    num_epochs=2000,
+    num_epochs=200,
     log_freq=50,
     save_freq=1,
     lr_schedule=default_lr_schedule,

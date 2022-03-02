@@ -11,16 +11,29 @@ from utils.tf_utils import set_tf_memory_growth
 from tensorflow_probability import distributions as tfd
 
 class ConvBlock(tfk.layers.Layer):
-    def __init__(self, filters: int, num_layers: int, **kwargs):
+    def __init__(self,
+        filters: int,
+        kernel_size: int,
+        num_layers: int,
+        dilation_rates: T.Union[T.Sequence[int], int],
+        **kwargs
+    ):
         super().__init__(**kwargs)
+        self.filters = filters
+        self.kernel_size = kernel_size
         self.num_layers = num_layers
+        self.dilation_rates = dilation_rates
+        if isinstance(dilation_rates, int):
+            self.dilation_rates = [dilation_rates] * num_layers
+
         self.convs = []
         for i in range(num_layers):
             self.convs.append(tfk.layers.Conv2D(
                 filters=filters,
-                kernel_size=3,
+                kernel_size=kernel_size,
                 strides=1,
                 padding="same",
+                dilation_rate=self.dilation_rates[i],
                 activation="relu",
                 kernel_initializer="glorot_normal",
                 kernel_regularizer=tfk.regularizers.l2(1e-4),
@@ -42,7 +55,12 @@ class ConvBlock(tfk.layers.Layer):
 
     def get_config(self):
         config = super().get_config()
-        config.update({"num_layers": self.num_layers})
+        config.update({
+            "filters": self.filters,
+            "kernel_size": self.kernel_size,
+            "num_layers": self.num_layers,
+            "dilation_rates": self.dilation_rates,
+        })
 
         return config
 
@@ -56,7 +74,7 @@ class MinVarEstimator(tfk.layers.Layer):
         weights = inv_variances / inv_variances_sum
 
         mu = tf.reduce_sum(mus * weights, axis=spatial_axes)
-        variance = 1. / tf.squeeze(inv_variances_sum)
+        variance = 1. / tf.squeeze(inv_variances_sum, axis=(1, 2))
 
         return mu, tf.sqrt(variance)
 
@@ -72,11 +90,11 @@ class DeepPose:
             axis=-1 if tfk.backend.image_data_format() == "channels_last" else 1
         )
 
-        self.block1 = ConvBlock(64, 2, name="block1")
-        self.block2 = ConvBlock(128, 2, name="block2")
-        self.block3 = ConvBlock(256, 3, name="block3")
-        self.block4 = ConvBlock(512, 3, name="block4")
-        self.block5 = ConvBlock(512, 3, name="block5")
+        self.block1 = ConvBlock(32, 3, 2, 1, name="block1")
+        self.block2 = ConvBlock(64, 3, 2, 1, name="block2")
+        self.block3 = ConvBlock(128, 3, 2, 2, name="block3")
+        self.block4 = ConvBlock(256, 3, 2, 2, name="block4")
+        self.block5 = ConvBlock(256, 3, 2, [4, 8], name="block5")
 
         small_init = tfk.initializers.random_normal(stddev=1e-3)
         self.conv_mu = tfk.layers.Conv2D(6, 1, 1, kernel_initializer=small_init, name="conv_mu")
@@ -152,11 +170,11 @@ class DeepPoseTrain(DeepPose):
         model = tfk.Model(inputs=inputs, outputs={"estimator": loss_est, "spatial": loss_spatial})
 
         loss_est = tf.reduce_mean(loss_est)
-        loss_spatial = tf.reduce_mean(loss_spatial)
+        loss_spatial = tf.reduce_mean(tf.reduce_sum(loss_spatial, axis=(1, 2)))
         model.add_metric(loss_est, name="Estimator Loss")
         model.add_metric(loss_spatial, name="Spatial Loss")
         model.add_loss(loss_est)
-        model.add_loss(loss_spatial)
+        #model.add_loss(loss_spatial)
 
         return model
 
