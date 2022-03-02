@@ -31,25 +31,19 @@ class ConvBlock(tfk.layers.Layer):
             self.convs.append(tfk.layers.Conv2D(
                 filters=filters,
                 kernel_size=kernel_size,
-                strides=1,
+                strides=2 if i == 0 else 1,
                 padding="same",
-                dilation_rate=self.dilation_rates[i],
+                dilation_rate=1 if i == 0 else self.dilation_rates[i],
                 activation="relu",
                 kernel_initializer="glorot_normal",
                 kernel_regularizer=tfk.regularizers.l2(1e-4),
                 bias_regularizer=tfk.regularizers.l2(1e-4),
                 name=f"conv_{i}"
             ))
-        self.pool = tfk.layers.MaxPool2D(
-            pool_size=(2, 2),
-            strides=(2, 2),
-            name="pool",
-        )
 
     def call(self, x):
         for conv in self.convs:
             x = conv(x)
-        x = self.pool(x)
 
         return x
 
@@ -90,11 +84,11 @@ class DeepPose:
             axis=-1 if tfk.backend.image_data_format() == "channels_last" else 1
         )
 
-        self.block1 = ConvBlock(64, 3, 2, 1, name="block1")
-        self.block2 = ConvBlock(128, 3, 2, 1, name="block2")
-        self.block3 = ConvBlock(256, 3, 3, 2, name="block3")
-        self.block4 = ConvBlock(512, 3, 3, 2, name="block4")
-        self.block5 = ConvBlock(512, 3, 3, [4, 4, 8], name="block5")
+        self.block1 = ConvBlock(32, 7, 2, 1, name="block1")
+        self.block2 = ConvBlock(64, 5, 2, 1, name="block2")
+        self.block3 = ConvBlock(128, 3, 3, 2, name="block3")
+        self.block4 = ConvBlock(256, 3, 3, 4, name="block4")
+        self.block5 = ConvBlock(256, 3, 3, 8, name="block5")
 
         small_init = tfk.initializers.random_normal(stddev=1e-3)
         self.conv_mu = tfk.layers.Conv2D(6, 1, 1, kernel_initializer=small_init, name="conv_mu")
