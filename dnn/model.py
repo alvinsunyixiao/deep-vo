@@ -90,11 +90,11 @@ class DeepPose:
             axis=-1 if tfk.backend.image_data_format() == "channels_last" else 1
         )
 
-        self.block1 = ConvBlock(32, 3, 2, 1, name="block1")
-        self.block2 = ConvBlock(64, 3, 2, 1, name="block2")
-        self.block3 = ConvBlock(128, 3, 2, 2, name="block3")
-        self.block4 = ConvBlock(256, 3, 2, 2, name="block4")
-        self.block5 = ConvBlock(256, 3, 2, [4, 8], name="block5")
+        self.block1 = ConvBlock(64, 3, 2, 1, name="block1")
+        self.block2 = ConvBlock(128, 3, 2, 1, name="block2")
+        self.block3 = ConvBlock(256, 3, 3, 2, name="block3")
+        self.block4 = ConvBlock(512, 3, 3, 2, name="block4")
+        self.block5 = ConvBlock(512, 3, 3, [4, 4, 8], name="block5")
 
         small_init = tfk.initializers.random_normal(stddev=1e-3)
         self.conv_mu = tfk.layers.Conv2D(6, 1, 1, kernel_initializer=small_init, name="conv_mu")

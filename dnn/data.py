@@ -10,9 +10,9 @@ from utils.pose3d import Pose3D
 class VODataPipe:
 
     DEFAULT_PARAMS = ParamDict(
-        data_root = "/mnt/data/deep_vo_large",
+        data_root = "/mnt/data/deep_vo",
         num_parallel_calls = 12,
-        batch_size = 32,
+        batch_size = 64,
         num_perturb = 16,
         prefetch_size = 4,
         shuffle_size = 512,
