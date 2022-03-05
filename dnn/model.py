@@ -8,8 +8,6 @@ from utils.params import ParamDict
 from utils.pose3d import Pose3D
 from utils.tf_utils import set_tf_memory_growth
 
-from tensorflow_probability import distributions as tfd
-
 class SameConvBnRelu(tfk.layers.Layer):
     def __init__(self,
         filters: int,
@@ -40,8 +38,6 @@ class SameConvBnRelu(tfk.layers.Layer):
 
         self.bn = tfk.layers.BatchNormalization(
             axis=1 if tfk.backend.image_data_format() == "channels_first" else -1,
-            momentum=0.9,
-            epsilon=1e-5,
             name="bn",
         ) if has_bn else None
 
@@ -158,28 +154,53 @@ class ResidualGroup(tfk.layers.Layer):
             x = block(x)
         return x
 
+class MinVarEstimator(tfk.layers.Layer):
+    def call(self, inputs):
+        mus, log_sigmas = inputs
+        log_inv_vars = -2 * log_sigmas
+        log_inv_vars_sum = tf.reduce_logsumexp(log_inv_vars, axis=(1, 2), keepdims=True)
+        log_weights = log_inv_vars - log_inv_vars_sum
+
+        mu = tf.reduce_sum(mus * tf.exp(log_weights), axis=(1, 2))
+        log_sigma = -tf.squeeze(log_inv_vars_sum, axis=(1, 2)) / 2.
+
+        return mu, log_sigma
+
 class DeepPose:
 
-    DEFAULT_PARAMS=ParamDict()
+    DEFAULT_PARAMS=ParamDict(
+        sigma_scale = np.array([1e2, 1e2, 1e2, 1e4, 1e4, 1e4]),
+    )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
         self.p = params
         self.concat = tfk.layers.Concatenate()
 
-        self.conv1 = SameConvBnRelu(32, 7, 2, name="conv1")
+        self.conv1 = SameConvBnRelu(64, 7, 2, name="conv1")
         self.pool1 = tfk.layers.MaxPool2D(3, 2, "same", name="pool1")
 
-        self.group1 = ResidualGroup(2, 32, False, name="group1")
-        self.group2 = ResidualGroup(2, 64, name="group2")
-        self.group3 = ResidualGroup(2, 128, name="group3")
-        self.group4 = ResidualGroup(2, 192, name="group4")
-        self.group5 = ResidualGroup(2, 256, name="group5")
-        self.group6 = ResidualGroup(2, 384, name="group6")
+        self.group1 = ResidualGroup(2, 64, False, name="group1")
+        self.group2 = ResidualGroup(3, 128, name="group2")
+        self.group3 = ResidualGroup(5, 256, name="group3")
+        self.group4 = ResidualGroup(2, 512, name="group4")
 
-        self.flatten = tfk.layers.Flatten()
+        self.conv_mu = tfk.layers.Conv2D(6, 1, 1,
+            kernel_initializer=tfk.initializers.random_normal(stddev=1e-4),
+            kernel_regularizer=tfk.regularizers.l2(1e-4),
+            bias_regularizer=tfk.regularizers.l2(1e-4),
+            name="conv_mu",
+        )
+        self.conv_log_sigma = tfk.layers.Conv2D(6, 1, 1,
+            kernel_initializer=tfk.initializers.random_normal(stddev=1e-4),
+            kernel_regularizer=tfk.regularizers.l2(1e-4),
+            bias_regularizer=tfk.regularizers.l2(1e-4),
+            name="conv_log_sigma",
+        )
 
-        self.fc_mu = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-4), name="fc_mu")
-        self.fc_sigma = tfk.layers.Dense(6, kernel_initializer=tfk.initializers.random_normal(stddev=1e-4), activation="exponential", name="fc_sigma")
+        self.estimator = MinVarEstimator(name="min_var_estimator")
+
+        # TODO(alvin): use this!
+        self.numeric_scale = tf.linalg.LinearOperatorDiag(self.p.numeric_scale)
 
     def build_model(self) -> tfk.Model:
         image1 = tfk.layers.Input((144, 256, 3), name="image1")
@@ -193,22 +214,28 @@ class DeepPose:
         x = self.group2(x)
         x = self.group3(x)
         x = self.group4(x)
-        x = self.group5(x)
-        x = self.group6(x)
 
-        x = self.flatten(x)
+        mus = self.conv_mu(x)
+        log_sigmas = self.conv_log_sigma(x)
+        sigmas = tfk.layers.Activation("exponential")(log_sigmas)
 
-        mu = self.fc_mu(x)
-        sigma = self.fc_sigma(x)
+        mu, log_sigma = self.estimator((mus, log_sigmas))
+        sigma = tfk.layers.Activation("exponential")(log_sigma)
 
         inputs = {"image1": image1, "image2": image2}
-        outputs = {"mu": mu, "sigma": sigma}
+        outputs = {
+            "mu": mu,
+            "sigma": sigma,
+            "log_sigma": log_sigma,
+            "spatial_mus": mus,
+            "spatial_sigmas": sigmas
+        }
 
         return tfk.Model(inputs=inputs, outputs=outputs)
 
 class GeodesicLoss(tfk.layers.Layer):
     def call(self, inputs: T.Tuple[tf.Tensor, ...]) -> tf.Tensor:
-        mu, sigma, pose1, pose2 = inputs
+        mu, log_sigma, pose1, pose2 = inputs
         w_T_c1 = Pose3D.from_storage(pose1)
         w_T_c2 = Pose3D.from_storage(pose2)
 
@@ -216,13 +243,20 @@ class GeodesicLoss(tfk.layers.Layer):
         w_T_q = w_T_c1 @ c1_T_q
         c2_T_q = w_T_c2.inv() @ w_T_q
 
-        dist = tfd.MultivariateNormalDiag(loc=tf.zeros_like(mu), scale_diag=sigma)
-        loss = tf.reduce_mean(-dist.log_prob(c2_T_q.to_se3()))
+        residual = c2_T_q.to_se3()
+        nll = tf.reduce_sum(log_sigma + .5 * residual**2 * tf.exp(-2 * log_sigma), axis=-1)
+        nll += 3 * tf.math.log(2 * np.pi)
 
+        min_loss = tf.reduce_min(nll)
+        max_loss = tf.reduce_max(nll)
+        self.add_metric(min_loss, name="Min Loss")
+        self.add_metric(max_loss, name="Max Loss")
+
+        loss = tf.reduce_mean(nll)
         self.add_loss(loss)
         self.add_metric(loss, name="Geodesic Loss")
 
-        return loss
+        return nll
 
 class DeepPoseTrain(DeepPose):
 
@@ -238,7 +272,7 @@ class DeepPoseTrain(DeepPose):
 
         loss = GeodesicLoss()((
             deep_pose.output["mu"],
-            deep_pose.output["sigma"],
+            deep_pose.output["log_sigma"],
             inputs["pose1"],
             inputs["pose2"],
         ))

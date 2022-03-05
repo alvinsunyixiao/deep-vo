@@ -40,6 +40,8 @@ def parse_args():
                         help="output directory to store checkpoints and logs")
     parser.add_argument("-r", "--resume", type=str, default=None,
                         help="resume from training session directory")
+    parser.add_argument("-l", "--load", type=str, default=None,
+                        help="path to a model checkpoint to load from")
 
     return parser.parse_args()
 
@@ -57,7 +59,11 @@ if __name__ == "__main__":
     val_ds = data_pipe.build_val_ds()
 
     model = DeepPoseTrain(p.model).build_model()
-    model.compile(tfk.optimizers.Adam(epsilon=1e-5, clipnorm=1.))
+    model.compile(tfk.optimizers.Adam(clipnorm=1.))
+
+    if args.load is not None:
+        print(f"Restored weights from {args.load}")
+        model.load_weights(args.load)
 
     initial_epoch = 0
     if args.resume is not None:
@@ -85,7 +91,7 @@ if __name__ == "__main__":
             tfk.callbacks.TensorBoard(
                 log_dir=os.path.join(sess_dir, "logs"),
                 update_freq=p.trainer.log_freq,
-                profile_batch=0,
+                profile_batch=(200, 1000),
                 histogram_freq=1,
             ),
             tfk.callbacks.LearningRateScheduler(p.trainer.lr_schedule),
