@@ -169,7 +169,7 @@ class MinVarEstimator(tfk.layers.Layer):
 class DeepPose:
 
     DEFAULT_PARAMS=ParamDict(
-        sigma_scale = np.array([1e2, 1e2, 1e2, 1e4, 1e4, 1e4]),
+        sigma_scale = np.array([1e3, 1e3, 1e3, 1e4, 1e4, 1e4]),
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
@@ -198,9 +198,6 @@ class DeepPose:
         )
 
         self.estimator = MinVarEstimator(name="min_var_estimator")
-
-        # TODO(alvin): use this!
-        self.numeric_scale = tf.linalg.LinearOperatorDiag(self.p.numeric_scale)
 
     def build_model(self) -> tfk.Model:
         image1 = tfk.layers.Input((144, 256, 3), name="image1")
