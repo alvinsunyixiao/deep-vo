@@ -49,6 +49,15 @@ class VODataPipe:
 
         return ds
 
+    def build_cal_ds(self) -> tf.data.Dataset:
+        file_pattern = os.path.join(self.p.data_root, "calibration", "*.tfrecord")
+        files = tf.data.Dataset.list_files(file_pattern, shuffle=False)
+        ds = tf.data.TFRecordDataset(files)
+        ds = ds.map(self._process_cal, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.batch(self.p.batch_size)
+
+        return ds
+
     def _train_interleave(self, file: tf.Tensor) -> tf.data.Dataset:
         ds = tf.data.TFRecordDataset(file)
         ds = ds.map(self._process_train, num_parallel_calls=4)
@@ -59,7 +68,6 @@ class VODataPipe:
     def _parse_single_image(self, img_str: tf.Tensor) -> tf.Tensor:
         image = tf.image.decode_image(img_str, channels=3)
         image.set_shape(self.p.img_size + (3,))
-        #image = tf.transpose(image, (2, 0, 1))
 
         return tf.cast(image, tf.float32) / 127.5 - 1.
 
@@ -122,6 +130,18 @@ class VODataPipe:
             lambda x, y: tf.concat([x, y], axis=0),
             front_data, back_data,
         )
+
+    @tf.function
+    def _process_cal(self, example_proto) -> T.Tuple[T.Dict[str, tf.Tensor], tf.Tensor]:
+        data_dict = self._process_val(example_proto)
+        inputs = {"image1": data_dict["image1"], "image2": data_dict["image2"]}
+
+        w_T_c1 = Pose3D.from_storage(data_dict["pose1"])
+        w_T_c2 = Pose3D.from_storage(data_dict["pose2"])
+        c1_T_c2 = w_T_c1.inv() @ w_T_c2
+        y = c1_T_c2.to_se3()
+
+        return inputs, y
 
     @tf.function
     def _process_train(self, example_proto) -> T.Dict[str, tf.Tensor]:
