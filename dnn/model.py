@@ -163,6 +163,7 @@ class MinVarEstimator(tfk.layers.Layer):
 
         mu = tf.reduce_sum(mus * tf.exp(log_weights), axis=(1, 2))
         log_sigma = -tf.squeeze(log_inv_vars_sum, axis=(1, 2)) / 2.
+        log_sigma = tf.maximum(log_sigma, tf.math.log(1e-4))
 
         return mu, log_sigma
 

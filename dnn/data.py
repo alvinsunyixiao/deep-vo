@@ -41,7 +41,7 @@ class VODataPipe:
 
     def build_val_ds(self, dirname: str = "validation") -> tf.data.Dataset:
         file_pattern = os.path.join(self.p.data_root, dirname, "*.tfrecord")
-        files = tf.data.Dataset.list_files(file_pattern, shuffle=False)
+        files = tf.data.Dataset.list_files(file_pattern, train=False)
         ds = tf.data.TFRecordDataset(files)
         ds = ds.map(self._process_val, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(self.p.batch_size)
@@ -71,10 +71,17 @@ class VODataPipe:
 
         return tf.cast(image, tf.float32) / 127.5 - 1.
 
+    def _image_aug(self, images_vhw3: tf.Tensor) -> tf.Tensor:
+        images_vhw3 = tf.image.random_brightness(images_vhw3, 0.1)
+        images_vhw3 = tf.image.random_brightness(images_vhw3, 0.3)
+        images_vhw3 = tf.image.random_contrast(images_vhw3, .5, 2.)
+        images_vhw3 += tf.random.normal(tf.shape(images_vhw3), stddev=0.05)
+        return images_vhw3
+
     def _filter_poses(self,
         data_dict: T.Dict[str, tf.Tensor],
         loc: T.Literal["front", "back"],
-        shuffle: bool = True,
+        train: bool = True,
     ) -> T.Dict[str, tf.Tensor]:
         poses_k7 = tf.io.parse_tensor(data_dict[f"{loc}_poses"], tf.float32)
         images_k = tf.io.parse_tensor(data_dict[f"{loc}_images"], tf.string)
@@ -91,7 +98,7 @@ class VODataPipe:
 
         num_samples = tf.shape(images_v)[0]
         indics = tf.range(num_samples)
-        if shuffle:
+        if train:
             indics = tf.random.shuffle(indics)
         num_pairs = tf.bitwise.right_shift(num_samples, 1)
         num_samples_even = tf.bitwise.left_shift(num_pairs, 1)
@@ -100,6 +107,8 @@ class VODataPipe:
         images_v = tf.gather(images_v, indics)
         images_vhw3 = tf.map_fn(self._parse_single_image, images_v,
                                 fn_output_signature=tf.float32)
+        if train:
+            images_vhw3 = self._image_aug(images_vhw3)
         poses_v7 = tf.gather(poses_v7, indics)
 
         return {
@@ -109,7 +118,10 @@ class VODataPipe:
             "pose2": poses_v7[num_pairs:],
         }
 
-    def _parse_raw(self, example_proto) -> T.Dict[str, tf.Tensor]:
+    def _parse_raw(self,
+        example_proto,
+        train: bool = True
+    ) -> T.Dict[str, tf.Tensor]:
         # build feature descriptor
         locations = ["front", "back"] # "bottom" unused for now
         feature_desc = {}
@@ -127,8 +139,8 @@ class VODataPipe:
         raw_dict = self._parse_raw(example_proto)
 
         # parse images (use front and back camera for now)
-        front_data = self._filter_poses(raw_dict, "front", shuffle)
-        back_data = self._filter_poses(raw_dict, "back", shuffle)
+        front_data = self._filter_poses(raw_dict, "front", train)
+        back_data = self._filter_poses(raw_dict, "back", train)
 
         return tf.nest.map_structure(
             lambda x, y: tf.concat([x, y], axis=0),
