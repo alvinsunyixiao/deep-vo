@@ -134,7 +134,7 @@ class VODataPipe:
 
     def _parse_func(self,
         example_proto,
-        shuffle: bool = True
+        train: bool = True
     ) -> T.Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
         raw_dict = self._parse_raw(example_proto)
 
