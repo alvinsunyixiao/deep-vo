@@ -10,7 +10,7 @@ from utils.pose3d import Pose3D
 class VODataPipe:
 
     DEFAULT_PARAMS = ParamDict(
-        data_root = "/mnt/data/deep_vo",
+        data_root = "/data/tfrecords/deep_vo",
         num_parallel_calls = 12,
         batch_size = 64,
         num_perturb = 16,
@@ -25,8 +25,8 @@ class VODataPipe:
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
         self.p = params
 
-    def build_train_ds(self) -> tf.data.Dataset:
-        file_pattern = os.path.join(self.p.data_root, "train", "*.tfrecord")
+    def build_train_ds(self, dirname: str = "train") -> tf.data.Dataset:
+        file_pattern = os.path.join(self.p.data_root, dirname, "*.tfrecord")
         files = tf.data.Dataset.list_files(file_pattern)
         ds = files.interleave(self._train_interleave,
             cycle_length=self.p.cycle_length,
@@ -39,8 +39,8 @@ class VODataPipe:
 
         return ds
 
-    def build_val_ds(self) -> tf.data.Dataset:
-        file_pattern = os.path.join(self.p.data_root, "validation", "*.tfrecord")
+    def build_val_ds(self, dirname: str = "validation") -> tf.data.Dataset:
+        file_pattern = os.path.join(self.p.data_root, dirname, "*.tfrecord")
         files = tf.data.Dataset.list_files(file_pattern, shuffle=False)
         ds = tf.data.TFRecordDataset(files)
         ds = ds.map(self._process_val, num_parallel_calls=tf.data.AUTOTUNE)
@@ -81,6 +81,7 @@ class VODataPipe:
         poses_k7.set_shape((self.p.num_perturb, 7))
         images_k.set_shape((self.p.num_perturb,))
 
+
         poses = Pose3D.from_storage(poses_k7)
         rots_euler_k3 = poses.R.to_euler()
         valid_k = rots_euler_k3[:, 1] <= math.radians(self.p.max_pitch_up)
@@ -108,10 +109,7 @@ class VODataPipe:
             "pose2": poses_v7[num_pairs:],
         }
 
-    def _parse_func(self,
-        example_proto,
-        shuffle: bool = True
-    ) -> T.Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+    def _parse_raw(self, example_proto) -> T.Dict[str, tf.Tensor]:
         # build feature descriptor
         locations = ["front", "back"] # "bottom" unused for now
         feature_desc = {}
@@ -120,7 +118,13 @@ class VODataPipe:
             feature_desc[f"{loc}_poses"] = tf.io.FixedLenFeature([], tf.string)
 
         # parse example proto
-        raw_dict = tf.io.parse_single_example(example_proto, feature_desc)
+        return tf.io.parse_single_example(example_proto, feature_desc)
+
+    def _parse_func(self,
+        example_proto,
+        shuffle: bool = True
+    ) -> T.Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+        raw_dict = self._parse_raw(example_proto)
 
         # parse images (use front and back camera for now)
         front_data = self._filter_poses(raw_dict, "front", shuffle)
@@ -132,16 +136,19 @@ class VODataPipe:
         )
 
     @tf.function
-    def _process_cal(self, example_proto) -> T.Tuple[T.Dict[str, tf.Tensor], tf.Tensor]:
-        data_dict = self._process_val(example_proto)
-        inputs = {"image1": data_dict["image1"], "image2": data_dict["image2"]}
+    def _process_cal(self, example_proto) -> T.Dict[str, tf.Tensor]:
+        raw_dict = self._parse_raw(example_proto)
+        poses_27 = tf.io.parse_tensor(raw_dict["front_poses"], tf.float32)
+        images_2 = tf.io.parse_tensor(raw_dict["front_images"], tf.string)
+        poses_27.set_shape((2, 7))
+        images_2.set_shape((2,))
 
-        w_T_c1 = Pose3D.from_storage(data_dict["pose1"])
-        w_T_c2 = Pose3D.from_storage(data_dict["pose2"])
-        c1_T_c2 = w_T_c1.inv() @ w_T_c2
-        y = c1_T_c2.to_se3()
-
-        return inputs, y
+        return {
+            "image1": self._parse_single_image(images_2[0]),
+            "image2": self._parse_single_image(images_2[1]),
+            "pose1": poses_27[0],
+            "pose2": poses_27[1],
+        }
 
     @tf.function
     def _process_train(self, example_proto) -> T.Dict[str, tf.Tensor]:

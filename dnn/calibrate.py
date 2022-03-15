@@ -16,9 +16,9 @@ def parse_args():
                         help="path to load the parameter file")
     parser.add_argument("-m", "--model", type=str, required=True,
                         help="path to load model from")
-    parser.add_argument("--batch-size", type=int, default=8,
+    parser.add_argument("--batch-size", type=int, default=64,
                         help="the batch size used for running SCOD")
-    parser.add_argument("--repeat", type=int, default=4,
+    parser.add_argument("--repeat", type=int, default=8,
                         help="train dataset repeat count for sampling")
     parser.add_argument("-o", "--output", type=str, required=True,
                         help="path to store output model with uncertainty")
@@ -36,13 +36,13 @@ if __name__ == "__main__":
     model = DeepPose(p.model).build_model()
     model.load_weights(args.model)
     model_vars = [var for var in model.trainable_variables
-                  if var.name.startswith("conv_mu") or var.name.startswith("group4/block_1/branch2b")]
+                  if var.name.startswith("conv_mu")]
 
     scod_model = SCOD(
         model=model,
         output_dist=GaussianDynamicDiagVar(),
         sketch_op_class=GaussianSketchOp,
-        num_eigs=16,
+        num_eigs=80,
         model_vars=model_vars,
         output_func=lambda x: x["mu"],
     )
@@ -54,6 +54,7 @@ if __name__ == "__main__":
         train_ds = train_ds.take(10)
 
     scod_model.process_dataset(train_ds)
+    print(scod_model.sketch.eigs)
     # save SCOD model
     scod_model(model.input)
     scod_model.save(args.output)

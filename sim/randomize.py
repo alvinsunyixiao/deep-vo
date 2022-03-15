@@ -33,3 +33,16 @@ def randomize_weather(client: airsim.VehicleClient,
                                       min(np.random.exponential(random_exp), 1))
         client.simSetWeatherParameter(airsim.WeatherParameter.Fog,
                                       min(np.random.exponential(random_exp), 1))
+
+def clear_weather(client: airsim.VehicleClient,
+                  random_exp: float = 0.1,
+                  client_lock: threading.Lock = threading.Lock()):
+    with client_lock:
+        client.simSetWeatherParameter(airsim.WeatherParameter.Rain, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.Roadwetness, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.Snow, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.RoadSnow, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.MapleLeaf, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.RoadLeaf, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.Dust, 0)
+        client.simSetWeatherParameter(airsim.WeatherParameter.Fog, 0)

@@ -8,27 +8,20 @@ import os
 import numpy as np
 
 from utils.ps4_controller import PS4Controller
-from sim.randomize import randomize_time, randomize_weather
+from sim.randomize import randomize_time, randomize_weather, clear_weather
 
 CLIENT_LOCK = threading.Lock()
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-o", "--output-dir", type=str, required=True,
-                        help="output directory to store output")
     return parser.parse_args()
 
 def create_trajectory_filepath(base_dir):
     filename = time.strftime("%y-%m-%d_%H-%M-%S.pkl")
     return os.path.join(base_dir, filename)
 
-
 if __name__ == "__main__":
     args = parse_args()
-    output_dir = args.output_dir
-    image_dir = os.path.join(output_dir, "images")
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(image_dir, exist_ok=True)
 
     client = airsim.MultirotorClient()
     client.confirmConnection()
@@ -39,6 +32,8 @@ if __name__ == "__main__":
     controller = PS4Controller()
     controller.register_button_callback(controller.O,
         lambda: randomize_weather(client, client_lock=CLIENT_LOCK))
+    controller.register_button_callback(controller.SQUARE,
+        lambda: clear_weather(client, client_lock=CLIENT_LOCK))
     controller.register_button_callback(controller.TRIANGLE,
         lambda: randomize_time(client, client_lock=CLIENT_LOCK))
 

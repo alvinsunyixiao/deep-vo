@@ -111,6 +111,7 @@ class Pose3D:
             return self.R @ other + self.t
 
     def to_se3(self, eps: float = 1e-4) -> tf.Tensor:
+        return self.to_pseudo_se3()
         w = self.R.to_so3(eps)
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
         t = self.t
