@@ -41,7 +41,7 @@ class VODataPipe:
 
     def build_val_ds(self, dirname: str = "validation") -> tf.data.Dataset:
         file_pattern = os.path.join(self.p.data_root, dirname, "*.tfrecord")
-        files = tf.data.Dataset.list_files(file_pattern, train=False)
+        files = tf.data.Dataset.list_files(file_pattern, shuffle=False)
         ds = tf.data.TFRecordDataset(files)
         ds = ds.map(self._process_val, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(self.p.batch_size)
