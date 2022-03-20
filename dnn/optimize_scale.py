@@ -35,16 +35,16 @@ class ScaleCalibrator:
     @tf.function
     def _optimize_once(self, data):
         with tf.GradientTape() as tape:
-            output, S = self.model({"image1": data["image1"], "image2": data["image2"]})
+            output, S_diag = self.model({"image1": data["image1"], "image2": data["image2"]}, training=False)
 
-            cov = tf.linalg.diag(output["sigma"]**2 + 1e-5) + S
+            S_diag = tf.maximum(S_diag, 1e-10)
             w_T_c1 = Pose3D.from_storage(data["pose1"])
             w_T_c2 = Pose3D.from_storage(data["pose2"])
             c1_T_q = Pose3D.from_se3(output["mu"])
             w_T_q = w_T_c1 @ c1_T_q
             c2_T_q = w_T_c2.inv() @ w_T_q
 
-            dist = tfd.MultivariateNormalTriL(scale_tril=tf.linalg.cholesky(cov))
+            dist = tfd.MultivariateNormalDiag(scale_diag=tf.sqrt(S_diag))
             log_ll = dist.log_prob(c2_T_q.to_se3())
             loss = tf.reduce_mean(-log_ll)
 

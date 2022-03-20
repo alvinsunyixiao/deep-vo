@@ -140,7 +140,17 @@ class Pose3D:
         return Pose3D(self.R[key], self.t[key])
 
     @classmethod
-    def identity(cls, size: Tuple[int, ...] = ()) -> Pose3D:
+    def stack(cls, poses: T.Iterable[Pose3D]) -> Pose3D:
+        ts = [pose.t for pose in poses]
+        quads = [poses.R.quad for pose in poses]
+
+        return Pose3D(
+            orientation = Rot3D(tf.stack(quads)),
+            position=tf.stack(ts),
+        )
+
+    @classmethod
+    def identity(cls, size: T.Tuple[int, ...] = ()) -> Pose3D:
         return Pose3D(
             orientation=Rot3D.identity(size),
             position=tf.zeros(size + (3,)),

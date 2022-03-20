@@ -33,6 +33,8 @@ def parse_args():
                         help="maximum rotational perturbation in [deg]")
     parser.add_argument("--max-translation", type=float, default=0.5,
                         help="maximum translational perturbation in [m]")
+    parser.add_argument("--viz", action="store_true",
+                        help="briefly pause between frames to visualize")
     return parser.parse_args()
 
 
@@ -102,6 +104,8 @@ if __name__ == "__main__":
                     camera_pose = airsim.Pose(responses[i].camera_position,
                                               responses[i].camera_orientation)
                     datum[f"{location}_poses"].append(airsim_to_pose3d(camera_pose).to_storage())
+                if args.viz:
+                    time.sleep(0.5)
 
             # write to TFRecord
             feature = {}

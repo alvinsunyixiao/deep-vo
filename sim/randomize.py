@@ -17,22 +17,30 @@ def randomize_weather(client: airsim.VehicleClient,
                       random_exp: float = 0.1,
                       client_lock: threading.Lock = threading.Lock()):
     with client_lock:
+        has_rain_or_snow = float(np.random.rand() < 0.5)
+        has_rain = float(np.random.rand() < 0.5)
+        has_snow = 1 - has_rain
         client.simSetWeatherParameter(airsim.WeatherParameter.Rain,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_rain_or_snow * has_rain * np.random.rand())
         client.simSetWeatherParameter(airsim.WeatherParameter.Roadwetness,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_rain_or_snow * has_rain * np.random.rand())
         client.simSetWeatherParameter(airsim.WeatherParameter.Snow,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_rain_or_snow * has_snow * np.random.rand())
         client.simSetWeatherParameter(airsim.WeatherParameter.RoadSnow,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_rain_or_snow * has_snow * np.random.rand())
+
+        has_leaf = float(np.random.rand() < 0.3)
         client.simSetWeatherParameter(airsim.WeatherParameter.MapleLeaf,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_leaf * has_rain * np.random.rand())
         client.simSetWeatherParameter(airsim.WeatherParameter.RoadLeaf,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_leaf * has_rain * np.random.rand())
+
+        has_fog = float(np.random.rand() < 0.5)
+        has_dust = 1 - has_fog
         client.simSetWeatherParameter(airsim.WeatherParameter.Dust,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_dust * np.random.rand() * .8)
         client.simSetWeatherParameter(airsim.WeatherParameter.Fog,
-                                      min(np.random.exponential(random_exp), 1))
+                                      has_fog * np.random.rand() * .8)
 
 def clear_weather(client: airsim.VehicleClient,
                   random_exp: float = 0.1,

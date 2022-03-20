@@ -16,10 +16,12 @@ def parse_args():
                         help="path to load the parameter file")
     parser.add_argument("-m", "--model", type=str, required=True,
                         help="path to load model from")
-    parser.add_argument("--batch-size", type=int, default=64,
+    parser.add_argument("--batch-size", type=int, default=128,
                         help="the batch size used for running SCOD")
     parser.add_argument("--repeat", type=int, default=8,
                         help="train dataset repeat count for sampling")
+    parser.add_argument("--num-eigs", type=int, default=80,
+                        help="number of eigen values")
     parser.add_argument("-o", "--output", type=str, required=True,
                         help="path to store output model with uncertainty")
     parser.add_argument("--debug", action="store_true",
@@ -42,13 +44,16 @@ if __name__ == "__main__":
         model=model,
         output_dist=GaussianDynamicDiagVar(),
         sketch_op_class=GaussianSketchOp,
-        num_eigs=80,
+        num_eigs=args.num_eigs,
         model_vars=model_vars,
         output_func=lambda x: x["mu"],
     )
 
     # build training dataset
-    data_pipe = VODataPipe(p.data(batch_size=args.batch_size))
+    data_pipe = VODataPipe(p.data(
+        batch_size=args.batch_size,
+        num_parallel_calls=4,
+    ))
     train_ds = data_pipe.build_train_ds().repeat(args.repeat)
     if args.debug:
         train_ds = train_ds.take(10)
