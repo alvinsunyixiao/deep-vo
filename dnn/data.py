@@ -10,16 +10,21 @@ from utils.pose3d import Pose3D
 class VODataPipe:
 
     DEFAULT_PARAMS = ParamDict(
-        data_root = "/data/tfrecords/deep_vo",
+        data_root = "/mnt/data/deep_vo_clean",
         num_parallel_calls = 12,
         batch_size = 64,
         num_perturb = 16,
         prefetch_size = 4,
         shuffle_size = 512,
         img_size = (144, 256),
-        # maximum looking up pitch in degrees
-        max_pitch_up = 30,
         cycle_length = 16,
+        distance_bins = 300,
+        # maximum allowed sky portion
+        max_sky_ratio = 0.35,
+        # maximum allowed close range occlusion
+        max_occlusion_ratio = 0.01,
+        # maximum distance to be considered as occlusion
+        max_occlusion_dist = 4,
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS):
@@ -85,13 +90,18 @@ class VODataPipe:
     ) -> T.Dict[str, tf.Tensor]:
         poses_k7 = tf.io.parse_tensor(data_dict[f"{loc}_poses"], tf.float32)
         images_k = tf.io.parse_tensor(data_dict[f"{loc}_images"], tf.string)
+        dists_kb = tf.io.parse_tensor(data_dict[f"{loc}_dists"], tf.float32)
         poses_k7.set_shape((self.p.num_perturb, 7))
         images_k.set_shape((self.p.num_perturb,))
-
+        dists_kb.set_shape((self.p.num_perturb, self.p.distance_bins))
 
         poses = Pose3D.from_storage(poses_k7)
         rots_euler_k3 = poses.R.to_euler()
-        valid_k = rots_euler_k3[:, 1] <= math.radians(self.p.max_pitch_up)
+
+        # filter out invalid samples
+        occlusion_ratio = tf.reduce_sum(dists_kb[:, :self.p.max_occlusion_dist], axis=-1)
+        sky_ratio = 1. - tf.reduce_sum(dists_kb, axis=-1)
+        valid_k = (occlusion_ratio <= self.p.max_occlusion_ratio) & (sky_ratio <= 0.3)
 
         images_v = tf.boolean_mask(images_k, valid_k)
         poses_v7 = tf.boolean_mask(poses_k7, valid_k)
@@ -128,6 +138,7 @@ class VODataPipe:
         for loc in locations:
             feature_desc[f"{loc}_images"] = tf.io.FixedLenFeature([], tf.string)
             feature_desc[f"{loc}_poses"] = tf.io.FixedLenFeature([], tf.string)
+            feature_desc[f"{loc}_dists"] = tf.io.FixedLenFeature([], tf.string)
 
         # parse example proto
         return tf.io.parse_single_example(example_proto, feature_desc)

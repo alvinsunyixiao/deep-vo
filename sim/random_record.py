@@ -23,7 +23,7 @@ def parse_args():
                         help="number of random-pose samples to generate")
     parser.add_argument("--num-perturb", type=int, default=16,
                         help="number of perturbation per pose sample")
-    parser.add_argument("--min-distance", type=float, default=2.0,
+    parser.add_argument("--min-distance", type=float, default=4.0,
                         help="avoid poses with surrounding obstacles closer than this distance")
     parser.add_argument("--shard-size", type=int, default=400,
                         help="number of samples per TFRecord shard")
@@ -31,7 +31,7 @@ def parse_args():
                         help="add this flag to perform wheather randomization")
     parser.add_argument("--max-rotation", type=float, default=20.0,
                         help="maximum rotational perturbation in [deg]")
-    parser.add_argument("--max-translation", type=float, default=0.5,
+    parser.add_argument("--max-translation", type=float, default=1.,
                         help="maximum translational perturbation in [m]")
     parser.add_argument("--viz", action="store_true",
                         help="briefly pause between frames to visualize")
@@ -62,18 +62,19 @@ if __name__ == "__main__":
         while pbar.n < args.num_samples:
             base_pose = pose_gen()
             client.simSetVehiclePose(pose3d_to_airsim(base_pose), True)
+            time.sleep(0.05)
 
             # check for surrounding distance
-            time.sleep(0.05) # wait for distance sensor update
-            dists = [
-                client.getDistanceSensorData("DistanceFront"),
-                client.getDistanceSensorData("DistanceRight"),
-                client.getDistanceSensorData("DistanceBack"),
-                client.getDistanceSensorData("DistanceLeft"),
-                client.getDistanceSensorData("DistanceUp"),
-                client.getDistanceSensorData("DistanceDown"),
-            ]
-            if any([d.distance < args.min_distance for d in dists]):
+            responses = client.simGetImages([
+                airsim.ImageRequest("front_center", airsim.ImageType.DepthPlanar, True),
+                airsim.ImageRequest("back_center", airsim.ImageType.DepthPlanar, True),
+                airsim.ImageRequest("bottom_center", airsim.ImageType.DepthPlanar, True),
+            ])
+            depth_data = [np.array(resp.image_data_float) for resp in responses]
+            occlusion_level = [np.sum(d < args.min_distance) / d.shape[0] for d in depth_data]
+
+            # skip if any of the three images have an occlusion level greater than 5%
+            if any([o > 0.01 for o in occlusion_level]):
                 continue
 
             # generate some pose perturbation
@@ -89,10 +90,15 @@ if __name__ == "__main__":
             datum = defaultdict(list)
             for i in range(args.num_perturb):
                 client.simSetVehiclePose(pose3d_to_airsim(poses[i]), False)
+                time.sleep(0.05)
+
                 responses = client.simGetImages([
                     airsim.ImageRequest("front_center", airsim.ImageType.Scene),
                     airsim.ImageRequest("back_center", airsim.ImageType.Scene),
                     airsim.ImageRequest("bottom_center", airsim.ImageType.Scene),
+                    airsim.ImageRequest("front_center", airsim.ImageType.DepthPlanar, True),
+                    airsim.ImageRequest("back_center", airsim.ImageType.DepthPlanar, True),
+                    airsim.ImageRequest("bottom_center", airsim.ImageType.DepthPlanar, True),
                 ])
 
                 locations = ["front", "back", "bottom"]
@@ -104,13 +110,22 @@ if __name__ == "__main__":
                     camera_pose = airsim.Pose(responses[i].camera_position,
                                               responses[i].camera_orientation)
                     datum[f"{location}_poses"].append(airsim_to_pose3d(camera_pose).to_storage())
+
+                    # save distance histogram
+                    hist, _ = np.histogram(depth, np.arange(300))
+                    datum[f"{location}_dists"].append(hist / depth.shape[0])
+
                 if args.viz:
-                    time.sleep(0.5)
+                    time.sleep(1.)
 
             # write to TFRecord
             feature = {}
             for key in datum:
-                feature[key] = tensor_to_feature(tf.stack(datum[key]))
+                tensor = tf.stack(datum[key])
+                if tensor.dtype == tf.float64:
+                    tensor = tf.cast(tensor, tf.float32)
+                feature[key] = tensor_to_feature(tensor)
+
             features = tf.train.Features(feature=feature)
             example = tf.train.Example(features=features)
             writer.write(example.SerializeToString())
