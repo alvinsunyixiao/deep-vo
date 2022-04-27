@@ -8,7 +8,7 @@ from tqdm import trange
 
 from utils.pose3d import Pose3D
 from utils.params import ParamDict
-from dnn.data import VODataPipe
+from dnn.baseline.data import VODataPipe
 
 class ScaleCalibrator:
     def __init__(self):

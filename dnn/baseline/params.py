@@ -1,6 +1,6 @@
-from dnn.data import VODataPipe
-from dnn.model import DeepPose
-from dnn.train import TRAINER_DEFAULT_PARAMS
+from dnn.baseline.data import VODataPipe
+from dnn.baseline.model import DeepPose
+from dnn.baseline.train import TRAINER_DEFAULT_PARAMS
 from utils.params import ParamDict
 
 PARAMS = ParamDict(

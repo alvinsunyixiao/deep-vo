@@ -6,8 +6,8 @@ import time
 import tensorflow as tf
 import tensorflow.keras as tfk
 
-from dnn.data import VODataPipe
-from dnn.model import DeepPoseTrain
+from dnn.baseline.data import VODataPipe
+from dnn.baseline.model import DeepPoseTrain
 from utils.params import ParamDict
 from utils.tf_utils import set_tf_memory_growth
 
