@@ -22,7 +22,7 @@ class VODataPipe:
         # maximum allowed sky portion
         max_sky_ratio = 0.35,
         # maximum allowed close range occlusion
-        max_occlusion_ratio = 0.01,
+        max_occlusion_ratio = 0.02,
         # maximum distance to be considered as occlusion
         max_occlusion_dist = 4,
     )
@@ -85,7 +85,7 @@ class VODataPipe:
 
     def _filter_poses(self,
         data_dict: T.Dict[str, tf.Tensor],
-        loc: T.Literal["front", "back"],
+        loc: T.Literal["front", "back", "bottom"],
         train: bool = True,
     ) -> T.Dict[str, tf.Tensor]:
         poses_k7 = tf.io.parse_tensor(data_dict[f"{loc}_poses"], tf.float32)
@@ -133,7 +133,7 @@ class VODataPipe:
         train: bool = True
     ) -> T.Dict[str, tf.Tensor]:
         # build feature descriptor
-        locations = ["front", "back"] # "bottom" unused for now
+        locations = ["front", "back", "bottom"]
         feature_desc = {}
         for loc in locations:
             feature_desc[f"{loc}_images"] = tf.io.FixedLenFeature([], tf.string)
@@ -152,10 +152,11 @@ class VODataPipe:
         # parse images (use front and back camera for now)
         front_data = self._filter_poses(raw_dict, "front", train)
         back_data = self._filter_poses(raw_dict, "back", train)
+        bottom_data = self._filter_poses(raw_dict, "bottom", train)
 
         return tf.nest.map_structure(
-            lambda x, y: tf.concat([x, y], axis=0),
-            front_data, back_data,
+            lambda x, y, z: tf.concat([x, y, z], axis=0),
+            front_data, back_data, bottom_data,
         )
 
     @tf.function
