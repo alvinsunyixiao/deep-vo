@@ -45,7 +45,7 @@ class Rot3D:
         return Rot3D(tf.reshape(self.quat, (-1, 4)))
 
     def __repr__(self) -> str:
-        return f"Rot3D(quaternion={self.quat.numpy()})"
+        return f"Rot3D(quaternion={self.quat})"
 
     def __getitem__(self, key) -> Rot3D:
         return Rot3D(self.quat[key])
@@ -134,7 +134,7 @@ class Pose3D:
         return tf.concat([self.R.quat, self.t], axis=-1)
 
     def __repr__(self) -> str:
-        return f"Pose3D(position={self.t.numpy()}, orientation={self.R})"
+        return f"Pose3D(position={self.t}, orientation={self.R})"
 
     def __getitem__(self, key) -> Pose3D:
         return Pose3D(self.R[key], self.t[key])
