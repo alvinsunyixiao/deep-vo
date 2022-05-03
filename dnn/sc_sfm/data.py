@@ -76,7 +76,7 @@ class VODataPipe:
         image.set_shape(self.p.img_size + (3,))
         image = tf.image.resize(image, self.p.img_resize)
 
-        return tf.cast(image, tf.float32) / 255..
+        return tf.cast(image, tf.float32) / 255.
 
     def _image_aug(self, images_vhw3: tf.Tensor) -> tf.Tensor:
         images_vhw3 = tf.image.random_brightness(images_vhw3, 0.1)
