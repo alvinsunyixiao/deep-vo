@@ -81,4 +81,4 @@ class PinholeCam:
         center = size_xy / 2.
         focal = center / tf.math.tan(fov_xy / 2)
 
-        return PinholeCam(center, focal)
+        return PinholeCam(focal, center)
