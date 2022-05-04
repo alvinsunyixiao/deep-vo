@@ -50,6 +50,9 @@ class Rot3D:
     def __getitem__(self, key) -> Rot3D:
         return Rot3D(self.quat[key])
 
+    def broadcast_to(self, shape) -> Rot3D:
+        return Rot3D(tf.broadcast_to(self.quat, tf.concat([shape, [4]], axis=0)))
+
     @classmethod
     def identity(cls, size: T.Tuple[int, ...] = ()) -> Rot3D:
         return Rot3D(tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), size + (4,)))
@@ -107,7 +110,7 @@ class Pose3D:
             )
         else:
             tf.assert_equal(tf.shape(other)[-1], 3, "Pose3D can only be applied to 3D vectors")
-            tf.assert_equal(tf.shape(other)[:-1], self.shape(), "batch dimensions do not match")
+            tf.assert_equal(tf.shape(other)[:-1], self.shape, "batch dimensions do not match")
             return self.R @ other + self.t
 
     def to_se3(self, eps: float = 1e-4) -> tf.Tensor:
@@ -138,6 +141,10 @@ class Pose3D:
 
     def __getitem__(self, key) -> Pose3D:
         return Pose3D(self.R[key], self.t[key])
+
+    def broadcast_to(self, shape) -> Pose3D:
+        return Pose3D(self.R.broadcast_to(shape),
+                      tf.broadcast_to(self.t, tf.concat([shape, [3]], axis=0)))
 
     @classmethod
     def stack(cls, poses: T.Iterable[Pose3D]) -> Pose3D:

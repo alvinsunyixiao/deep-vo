@@ -33,25 +33,41 @@ class PinholeCam:
     def __getitem__(self, key) -> PinholeCam:
         return PinholeCam(self.focal[key], self.center[key])
 
-    def project(self, points_3d: tf.Tensor) -> tf.Tensor:
-        return camera.perspective.project(points_3d, self.focal, self.center)
+    def project(self, points_3d_bhw3: tf.Tensor) -> tf.Tensor:
+        bhw = tf.shape(points_3d_bhw3)[:-1]
+        bhw2 = tf.concat([bhw, [2]], axis=0)
+        return camera.perspective.project(
+            point_3d=points_3d_bhw3,
+            focal=tf.broadcast_to(self.focal, bhw2),
+            principal_point=tf.broadcast_to(self.center, bhw2),
+        )
 
     def unproject(self, depth_bhw1: tf.Tensor) -> tf.Tensor:
         h = tf.shape(depth_bhw1)[-3]
         w = tf.shape(depth_bhw1)[-2]
-        x_hw, y_hw = tf.meshgrid(tf.range(w), tf.range(h), indexing="xy")
+        x_hw, y_hw = tf.meshgrid(tf.range(w, dtype=tf.float32),
+                                 tf.range(h, dtype=tf.float32),
+                                 indexing="xy")
         points_2d_hw2 = tf.stack([x_hw, y_hw], axis=-1)
-        return camera.perspective.unproject(points_2d_hw2, depth_bhw1, self.focal, self.center)
+        bhw = tf.shape(depth_bhw1)[:-1]
+        bhw2 = tf.concat([bhw, [2]], axis=0)
+        return camera.perspective.unproject(
+            point_2d=tf.broadcast_to(points_2d_hw2, bhw2),
+            depth=depth_bhw1,
+            focal=tf.broadcast_to(self.focal, bhw2),
+            principal_point=tf.broadcast_to(self.center, bhw2),
+        )
 
     def reproject(self,
         depth_tgt_bhw1: tf.Tensor,
         src_T_tgt_b: Pose3D,
     ) -> T.Tuple[tf.Tensor, tf.Tensor]:
-        p_tgt_bhw3 = self.unproject_depth(depth_tgt_bhw1)
-        p_src_bhw3 = src_T_tgt_b[:, None, None] @ p_tgt_bhw3
+        bhw = tf.shape(depth_tgt_bhw1)[:-1]
+        p_tgt_bhw3 = self.unproject(depth_tgt_bhw1)
+        p_src_bhw3 = src_T_tgt_b[:, tf.newaxis, tf.newaxis].broadcast_to(bhw) @ p_tgt_bhw3
         pixel_src_bhw2 = self.project(p_src_bhw3)
 
-        return pixel_src_bhw2, p_src_bhw3[..., -1, None]
+        return pixel_src_bhw2, p_src_bhw3[..., -1, tf.newaxis]
 
     @classmethod
     def from_size_and_fov(cls,

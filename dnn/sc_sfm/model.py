@@ -1,5 +1,5 @@
 import tensorflow as tf
-import tensorflow.python.keras as tfk
+import tensorflow.keras as tfk
 import typing as T
 
 from dnn.baseline.model import ResidualGroup, SameConvBnRelu
@@ -52,7 +52,6 @@ class Conv3x3Upsample(tfk.layers.Layer):
 class DisparityDecoder(tfk.layers.Layer):
     def __init__(self,
         num_channels: T.Sequence[int] = [16, 32, 64, 128, 256],
-        max_scale: int = 4,
         alpha: float = 10,
         beta: float = 0.01,
         **kwargs,
@@ -60,35 +59,29 @@ class DisparityDecoder(tfk.layers.Layer):
         super().__init__(**kwargs)
 
         self.num_channels = num_channels
-        self.max_scale = max_scale
         self.alpha = alpha
         self.beta = beta
 
         self.upsamples = []
         self.proj_convs = []
-        self.disp_convs = []
+        self.disp_conv = tfk.layers.Conv2D(1, 3,
+            padding="same", activation="sigmoid", name="disp_conv")
 
         for i, ch in enumerate(num_channels):
             self.upsamples.append(Conv3x3Upsample(ch, name=f"upsample_{i}"))
             self.proj_convs.append(
                 tfk.layers.Conv2D(ch, 3, padding="same", activation="elu", name=f"proj_conv_{i}"))
-            if i < max_scale:
-                self.disp_convs.append(
-                    tfk.layers.Conv2D(1, 3, padding="same", name=f"disp_conv_{i}"))
 
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
         config.update({
             "num_channels": self.num_channels,
-            "max_scale": self.max_scale,
             "alpha": self.alpha,
             "beta": self.beta,
         })
         return config
 
     def call(self, features):
-        outputs = []
-
         x = features[-1]
 
         for i in range(len(self.num_channels) - 1, -1, -1):
@@ -96,25 +89,28 @@ class DisparityDecoder(tfk.layers.Layer):
             if i > 0:
                 x = tf.concat([x, features[i - 1]], axis=-1)
             x = self.proj_convs[i](x)
-            if i < self.max_scale:
-                disp = self.alpha * tf.sigmoid(self.disp_convs[i](x)) + self.beta
-                outputs.append(disp)
+            if i == 0:
+                disp = self.alpha * self.disp_conv(x) + self.beta
 
-        return outputs
+        return disp
 
 class PoseDecoder(tfk.layers.Layer):
-    def __init__(self, filters=256, num_layers=3, **kwargs):
+    def __init__(self, filters=256, num_layers=3, output_scale=1e-2, **kwargs):
         super().__init__(**kwargs)
 
         self.filters = filters
         self.num_layers = num_layers
+        self.output_scale = output_scale
 
         self.relu1 = tfk.layers.ReLU(name="relu1")
         self.convs = []
         for i in range(num_layers):
-            self.convs.append(tfk.layers.Conv2D(filters, 3, 1, "same",
-                                                activation="relu", name=f"conv_{i}"))
-        self.pose_conv = tfk.layers.Conv2D(6, 1, name="pose_conv")
+            self.convs.append(tfk.layers.Conv2D(
+                filters, 3, 1, "same",
+                activation="elu",
+                name=f"conv_{i}",
+            ))
+        self.pose_conv = tfk.layers.Conv2D(6, 1, name="pose_conv", kernel_initializer=tfk.initializers.random_normal(stddev=1e-2))
         self.pool = tfk.layers.GlobalAvgPool2D(name="global_avg_pool")
 
     def get_config(self) -> T.Dict[str, T.Any]:
@@ -122,6 +118,7 @@ class PoseDecoder(tfk.layers.Layer):
         config.update({
             "filters": self.filters,
             "num_layers": self.num_layers,
+            "output_scale": self.output_scale
         })
         return config
 
@@ -132,7 +129,7 @@ class PoseDecoder(tfk.layers.Layer):
         x = self.pose_conv(x)
         x = self.pool(x)
 
-        return x
+        return self.output_scale * x
 
 class SCSFM:
 
