@@ -35,7 +35,7 @@ class Conv3x3Upsample(tfk.layers.Layer):
 
         self.filters = filters
         # TODO(alvin): try reflection padding
-        self.conv = tfk.layers.Conv2D(filters, 3, activation="elu", padding="same", name="conv3x3")
+        self.conv = tfk.layers.Conv2D(filters, 3, activation="relu", padding="same", name="conv3x3")
         self.upsample = tfk.layers.UpSampling2D(2, interpolation="bilinear", name="upsample")
 
     def get_config(self) -> T.Dict[str, T.Any]:
@@ -70,7 +70,7 @@ class DisparityDecoder(tfk.layers.Layer):
         for i, ch in enumerate(num_channels):
             self.upsamples.append(Conv3x3Upsample(ch, name=f"upsample_{i}"))
             self.proj_convs.append(
-                tfk.layers.Conv2D(ch, 3, padding="same", activation="elu", name=f"proj_conv_{i}"))
+                tfk.layers.Conv2D(ch, 3, padding="same", activation="relu", name=f"proj_conv_{i}"))
 
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
@@ -107,7 +107,7 @@ class PoseDecoder(tfk.layers.Layer):
         for i in range(num_layers):
             self.convs.append(tfk.layers.Conv2D(
                 filters, 3, 1, "same",
-                activation="elu",
+                activation="relu",
                 name=f"conv_{i}",
             ))
         self.pose_conv = tfk.layers.Conv2D(6, 1, name="pose_conv")

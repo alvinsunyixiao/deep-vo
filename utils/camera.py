@@ -65,9 +65,11 @@ class PinholeCam:
         bhw = tf.shape(depth_tgt_bhw1)[:-1]
         p_tgt_bhw3 = self.unproject(depth_tgt_bhw1)
         p_src_bhw3 = src_T_tgt_b[:, tf.newaxis, tf.newaxis].broadcast_to(bhw) @ p_tgt_bhw3
+        pz_src_bhw1 = tf.maximum(p_src_bhw3[..., -1, tf.newaxis], 1e-3)
+        p_src_bhw3 = tf.concat([p_src_bhw3[..., :2], pz_src_bhw1], axis=-1)
         pixel_src_bhw2 = self.project(p_src_bhw3)
 
-        return pixel_src_bhw2, p_src_bhw3[..., -1, tf.newaxis]
+        return pixel_src_bhw2, pz_src_bhw1
 
     @classmethod
     def from_size_and_fov(cls,

@@ -83,7 +83,6 @@ class VODataPipe:
         images_vhw3 = tf.image.random_brightness(images_vhw3, 0.3)
         images_vhw3 = tf.image.random_contrast(images_vhw3, .5, 2.)
         images_vhw3 += tf.random.normal(tf.shape(images_vhw3), stddev=0.05)
-        images_vhw3 = tf.clip_by_value(images_vhw3, 0., 1.)
         return images_vhw3
 
     def _filter_poses(self,

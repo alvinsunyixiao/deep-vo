@@ -68,10 +68,11 @@ class LossManager:
         h = tf.shape(img_tgt_bhw3)[1]
         w = tf.shape(img_tgt_bhw3)[2]
         pixel_src_bhw2, depth_computed_bhw1 = self.cam.reproject(depth_tgt_bhw1, src_T_tgt_b)
-        valid_mask_bhw = (pixel_src_bhw2[..., 0] >= 0.) & \
-                         (pixel_src_bhw2[..., 0] <= tf.cast(w, tf.float32) - 1.) & \
-                         (pixel_src_bhw2[..., 1] >= 0.) & \
-                         (pixel_src_bhw2[..., 1] <= tf.cast(h, tf.float32) - 1.)
+
+        valid_mask_bhw = (pixel_src_bhw2[..., 0] >= 5.) & \
+                         (pixel_src_bhw2[..., 0] <= tf.cast(w, tf.float32) - 6.) & \
+                         (pixel_src_bhw2[..., 1] >= 5.) & \
+                         (pixel_src_bhw2[..., 1] <= tf.cast(h, tf.float32) - 6.)
         valid_mask_bhw1 = tf.cast(valid_mask_bhw[..., None], tf.float32)
 
         img_proj_bhw3 = tfa.image.resampler(img_src_bhw3, pixel_src_bhw2)
@@ -86,9 +87,10 @@ class LossManager:
 
         # photometric loss
         img_l1_bhw3 = tf.abs(img_proj_bhw3 - img_tgt_bhw3)
+        img_l1_bhw3 = tf.clip_by_value(img_l1_bhw3, 0., 1.)
         img_ssim_bhw3 = self.ssim(img_proj_bhw3, img_tgt_bhw3)
         img_diff_bhw3 = .15 * img_l1_bhw3 + .85 * (1. - img_ssim_bhw3) / 2.
-        img_diff_bhw3 = (1. - depth_diff_bhw1) * img_diff_bhw3
+        img_diff_bhw3 *= (1. - depth_diff_bhw1)
         img_loss = tf.reduce_sum(img_diff_bhw3 * valid_mask_bhw1)
         img_loss = tf.math.divide_no_nan(img_loss, tf.reduce_sum(valid_mask_bhw1) * 3)
 
