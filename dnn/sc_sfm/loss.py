@@ -77,19 +77,20 @@ class LossManager:
         img_proj_bhw3 = tfa.image.resampler(img_src_bhw3, pixel_src_bhw2)
         depth_proj_bhw1 = tfa.image.resampler(depth_src_bhw1, pixel_src_bhw2)
 
-        # photometric loss
-        img_diff_bhw3 = img_proj_bhw3 - img_tgt_bhw3
-        img_ssim_bhw3 = self.ssim(img_proj_bhw3, img_tgt_bhw3)
-        img_loss = .15 * tf.abs(img_diff_bhw3) + .85 * (1. - img_ssim_bhw3) / 2.
-        img_loss = tf.reduce_sum(img_loss * valid_mask_bhw1)
-        img_loss = tf.math.divide_no_nan(img_loss, tf.reduce_sum(valid_mask_bhw1) * 3)
-
         # geometric loss
-        depth_diff_bhw1 = depth_computed_bhw1 - depth_proj_bhw1
-        geo_loss = tf.abs(depth_diff_bhw1) / (depth_computed_bhw1 + depth_proj_bhw1)
-        geo_loss = tf.clip_by_value(geo_loss, 0., 1.)
-        geo_loss = tf.reduce_sum(geo_loss * valid_mask_bhw1)
+        depth_l1_bhw1 = tf.abs(depth_computed_bhw1 - depth_proj_bhw1)
+        depth_diff_bhw1 = depth_l1_bhw1 / (depth_computed_bhw1 + depth_proj_bhw1)
+        depth_diff_bhw1 = tf.clip_by_value(depth_diff_bhw1, 0., 1.)
+        geo_loss = tf.reduce_sum(depth_diff_bhw1 * valid_mask_bhw1)
         geo_loss = tf.math.divide_no_nan(geo_loss, tf.reduce_sum(valid_mask_bhw1))
+
+        # photometric loss
+        img_l1_bhw3 = tf.abs(img_proj_bhw3 - img_tgt_bhw3)
+        img_ssim_bhw3 = self.ssim(img_proj_bhw3, img_tgt_bhw3)
+        img_diff_bhw3 = .15 * img_l1_bhw3 + .85 * (1. - img_ssim_bhw3) / 2.
+        img_diff_bhw3 = (1. - depth_diff_bhw1) * img_diff_bhw3
+        img_loss = tf.reduce_sum(img_diff_bhw3 * valid_mask_bhw1)
+        img_loss = tf.math.divide_no_nan(img_loss, tf.reduce_sum(valid_mask_bhw1) * 3)
 
         return img_loss, geo_loss
 
