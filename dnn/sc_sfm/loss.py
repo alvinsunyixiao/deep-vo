@@ -75,7 +75,7 @@ class LossManager:
         valid_mask_bhw1 = tf.cast(valid_mask_bhw[..., None], tf.float32)
 
         img_proj_bhw3 = tfa.image.resampler(img_src_bhw3, pixel_src_bhw2)
-        depth_proj_bhw3 = tfa.image.resampler(depth_src_bhw1, pixel_src_bhw2)
+        depth_proj_bhw1 = tfa.image.resampler(depth_src_bhw1, pixel_src_bhw2)
 
         # photometric loss
         img_diff_bhw3 = img_proj_bhw3 - img_tgt_bhw3
@@ -85,8 +85,9 @@ class LossManager:
         img_loss = tf.math.divide_no_nan(img_loss, tf.reduce_sum(valid_mask_bhw1) * 3)
 
         # geometric loss
-        depth_diff_bhw1 = depth_computed_bhw1 - depth_proj_bhw3
-        geo_loss = tf.abs(depth_diff_bhw1) / (depth_computed_bhw1 + depth_proj_bhw3)
+        depth_diff_bhw1 = depth_computed_bhw1 - depth_proj_bhw1
+        geo_loss = tf.abs(depth_diff_bhw1) / (depth_computed_bhw1 + depth_proj_bhw1)
+        geo_loss = tf.clip_by_value(geo_loss, 0., 1.)
         geo_loss = tf.reduce_sum(geo_loss * valid_mask_bhw1)
         geo_loss = tf.math.divide_no_nan(geo_loss, tf.reduce_sum(valid_mask_bhw1))
 
@@ -103,8 +104,8 @@ class LossManager:
         grad_img_x_bhw3 = tf.abs(img_bhw3[:, :, :-1, :] - img_bhw3[:, :, 1:, :])
         grad_img_y_bhw3 = tf.abs(img_bhw3[:, :-1, :, :] - img_bhw3[:, 1:, :, :])
 
-        grad_depth_x_bhw1 *= tf.exp(tf.reduce_mean(grad_img_x_bhw3, axis=-1, keepdims=True))
-        grad_depth_y_bhw1 *= tf.exp(tf.reduce_mean(grad_img_y_bhw3, axis=-1, keepdims=True))
+        grad_depth_x_bhw1 *= tf.exp(-tf.reduce_mean(grad_img_x_bhw3, axis=-1, keepdims=True))
+        grad_depth_y_bhw1 *= tf.exp(-tf.reduce_mean(grad_img_y_bhw3, axis=-1, keepdims=True))
 
         return tf.reduce_mean(grad_depth_x_bhw1) + tf.reduce_mean(grad_depth_y_bhw1)
 
@@ -113,6 +114,8 @@ class LossManager:
         img2_bhw3: tf.Tensor,
         depth1_bhw1: tf.Tensor,
         depth2_bhw1: tf.Tensor,
+        disp1_bhw1: tf.Tensor,
+        disp2_bhw1: tf.Tensor,
         c1_T_c2: Pose3D,
         c2_T_c1: Pose3D,
     ):

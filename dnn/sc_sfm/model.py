@@ -110,7 +110,7 @@ class PoseDecoder(tfk.layers.Layer):
                 activation="elu",
                 name=f"conv_{i}",
             ))
-        self.pose_conv = tfk.layers.Conv2D(6, 1, name="pose_conv", kernel_initializer=tfk.initializers.random_normal(stddev=1e-2))
+        self.pose_conv = tfk.layers.Conv2D(6, 1, name="pose_conv")
         self.pool = tfk.layers.GlobalAvgPool2D(name="global_avg_pool")
 
     def get_config(self) -> T.Dict[str, T.Any]:

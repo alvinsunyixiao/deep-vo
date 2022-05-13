@@ -12,7 +12,7 @@ class VODataPipe:
     DEFAULT_PARAMS = ParamDict(
         data_root = "/home/alvin/data/tfrecords/deep_vo_clean",
         num_parallel_calls = 12,
-        batch_size = 16,
+        batch_size = 32,
         num_perturb = 16,
         prefetch_size = 4,
         shuffle_size = 512,

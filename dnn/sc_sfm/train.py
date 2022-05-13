@@ -9,7 +9,7 @@ from dnn.sc_sfm.data import VODataPipe
 from dnn.sc_sfm.loss import LossManager
 from dnn.sc_sfm.model import SCSFM
 from utils.params import ParamDict
-from utils.pose3d import Pose3D
+from utils.pose3d import Pose3D, Rot3D
 
 class Trainer:
 
@@ -54,6 +54,14 @@ class Trainer:
 
     @tf.function
     def _train_step(self, data: T.Dict[str, T.Any], optimizer: tfk.optimizers.Optimizer):
+        #ned_T_edn = Pose3D.identity()
+        #ned_T_edn.R = Rot3D.from_matrix([
+        #    [0., 0., 1.],
+        #    [1., 0., 0.],
+        #    [0., 1., 0.],
+        #])
+        #pose1 = Pose3D.from_storage(data["pose1"]) @ ned_T_edn
+        #pose2 = Pose3D.from_storage(data["pose2"]) @ ned_T_edn
         with tf.GradientTape() as tape:
             outputs = self.model(data)
             img_loss, geo_loss, smooth_loss = self.loss.all_loss(
@@ -61,10 +69,12 @@ class Trainer:
                 img2_bhw3=data["image2"],
                 depth1_bhw1=outputs["depth1"],
                 depth2_bhw1=outputs["depth2"],
-                #c1_T_c2=Pose3D.from_se3(outputs["c1_T_c2"]),
-                #c2_T_c1=Pose3D.from_se3(outputs["c2_T_c1"]),
-                c1_T_c2=Pose3D.from_storage(data["pose1"]).inv() @ Pose3D.from_storage(data["pose2"]),
-                c2_T_c1=Pose3D.from_storage(data["pose2"]).inv() @ Pose3D.from_storage(data["pose1"]),
+                disp1_bhw1=outputs["disp1"],
+                disp2_bhw1=outputs["disp2"],
+                c1_T_c2=Pose3D.from_se3(outputs["c1_T_c2"]),
+                c2_T_c1=Pose3D.from_se3(outputs["c2_T_c1"]),
+                #c1_T_c2=pose1.inv() @ pose2,
+                #c2_T_c1=pose2.inv() @ pose1,
             )
             tf.summary.scalar("img_loss", img_loss)
             tf.summary.scalar("geo_loss", geo_loss)
