@@ -16,6 +16,7 @@ class Trainer:
     DEFAULT_PARAMS = ParamDict(
         num_epochs = 300,
         save_freq = 2,
+        img_log_freq = 500,
     )
 
     def __init__(self):
@@ -25,6 +26,9 @@ class Trainer:
         # model
         self.sc_sfm = SCSFM(self.p.model)
         self.model = self.sc_sfm.build_model()
+        if self.args.load is not None:
+            self.model.load_weights(self.args.load)
+            print(f"Weights loaded from {self.args.load}")
 
         # loss
         self.loss = LossManager(self.p.loss)
@@ -49,6 +53,8 @@ class Trainer:
                             help="path to the parameter file")
         parser.add_argument("-o", "--output", type=str, required=True,
                             help="path to store weights")
+        parser.add_argument("-l", "--load", type=str, default=None,
+                            help="path to load weights from")
 
         return parser.parse_args()
 
@@ -71,10 +77,10 @@ class Trainer:
                 depth2_bhw1=outputs["depth2"],
                 disp1_bhw1=outputs["disp1"],
                 disp2_bhw1=outputs["disp2"],
-                #c1_T_c2=Pose3D.from_se3(outputs["c1_T_c2"]),
-                #c2_T_c1=Pose3D.from_se3(outputs["c2_T_c1"]),
-                c1_T_c2=pose1.inv() @ pose2,
-                c2_T_c1=pose2.inv() @ pose1,
+                c1_T_c2=Pose3D.from_se3(outputs["c1_T_c2"]),
+                c2_T_c1=Pose3D.from_se3(outputs["c2_T_c1"]),
+                #c1_T_c2=pose1.inv() @ pose2,
+                #c2_T_c1=pose2.inv() @ pose1,
             )
             tf.summary.scalar("img_loss", img_loss)
             tf.summary.scalar("geo_loss", geo_loss)
@@ -84,14 +90,21 @@ class Trainer:
             loss = w.img * img_loss + w.geo * geo_loss + w.smooth * smooth_loss
             tf.summary.scalar("loss", loss)
             tf.print("Loss:", loss, "img_loss:", img_loss, "geo_loss:", geo_loss, "smooth_loss:", smooth_loss)
-            #tf.print(tf.histogram_fixed_width(outputs["depth1"], (0., 100.), 6))
 
         grads = tape.gradient(loss, self.model.trainable_variables)
         optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
+        if self.global_step % self.p.trainer.img_log_freq == 0:
+            tf.summary.image("image", data["image1"])
+            disp_max = tf.reduce_max(outputs["disp1"], axis=(1, 2, 3), keepdims=True)
+            disp_min = tf.reduce_min(outputs["disp1"], axis=(1, 2, 3), keepdims=True)
+            tf.summary.image("disparity", (outputs["disp1"] - disp_min) / (disp_max - disp_min))
+
     def train(self):
         optimizer = tfk.optimizers.Adam(1e-4)
         for i in range(self.p.trainer.num_epochs):
+            print(f"------ Saving Checkpoint ------")
+            self.model.save(os.path.join(self.ckpt_dir, f"epoch-{i}"))
             print(f"------ Starting Epoch {i} ------")
             with self.train_writer.as_default():
                 for data in self.train_ds:

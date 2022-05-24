@@ -40,7 +40,7 @@ class Conv3x3Upsample(tfk.layers.Layer):
 
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
-        config.update({"filters": filters})
+        config.update({"filters": self.filters})
         return config
 
     def call(self, x):
@@ -52,8 +52,8 @@ class Conv3x3Upsample(tfk.layers.Layer):
 class DisparityDecoder(tfk.layers.Layer):
     def __init__(self,
         num_channels: T.Sequence[int] = [16, 32, 64, 128, 256],
-        alpha: float = 10,
-        beta: float = 0.01,
+        alpha: float = 2.,
+        beta: float = 2e-3,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)

@@ -33,7 +33,7 @@ class LossManager:
         img1_bhw3: tf.Tensor,
         img2_bhw3: tf.Tensor,
         max_val: float = 1.,
-        filter_size: int = 11,
+        filter_size: int = 7,
         filter_sigma: float = 1.5,
         k1: float = 0.01,
         k2: float = 0.03,
@@ -80,7 +80,7 @@ class LossManager:
 
         # geometric loss
         depth_l1_bhw1 = tf.abs(depth_computed_bhw1 - depth_proj_bhw1)
-        depth_diff_bhw1 = depth_l1_bhw1 / (depth_computed_bhw1 + depth_proj_bhw1)
+        depth_diff_bhw1 = depth_l1_bhw1 / tf.stop_gradient(depth_computed_bhw1 + depth_proj_bhw1)
         depth_diff_bhw1 = tf.clip_by_value(depth_diff_bhw1, 0., 1.)
         geo_loss = tf.reduce_sum(depth_diff_bhw1 * valid_mask_bhw1)
         geo_loss = tf.math.divide_no_nan(geo_loss, tf.reduce_sum(valid_mask_bhw1))
@@ -122,8 +122,8 @@ class LossManager:
         c1_T_c2: Pose3D,
         c2_T_c1: Pose3D,
     ):
-        smooth_loss1 = self.smooth_loss(depth1_bhw1, img1_bhw3)
-        smooth_loss2 = self.smooth_loss(depth2_bhw1, img2_bhw3)
+        smooth_loss1 = self.smooth_loss(disp1_bhw1, img1_bhw3)
+        smooth_loss2 = self.smooth_loss(disp2_bhw1, img2_bhw3)
 
         img_loss1, geo_loss1 = self.warp_loss(img2_bhw3, depth2_bhw1, img1_bhw3, depth1_bhw1, c1_T_c2)
         img_loss2, geo_loss2 = self.warp_loss(img1_bhw3, depth1_bhw1, img2_bhw3, depth2_bhw1, c2_T_c1)
