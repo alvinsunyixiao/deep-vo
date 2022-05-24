@@ -1,6 +1,7 @@
+import os
 import tensorflow as tf
-import tensorflow.keras as tfk
 import typing as T
+from tensorflow import keras as tfk
 
 from dnn.baseline.model import ResidualGroup, SameConvBnRelu
 from utils.params import ParamDict
@@ -147,36 +148,46 @@ class SCSFM:
         self.concat = tfk.layers.Concatenate()
         self.inverse = tfk.layers.Lambda(lambda x: 1. / x, name="inverse")
 
-    def build_model(self) -> tfk.Model:
-        image1 = tfk.layers.Input(self.p.img_size + (3,), name="image1")
-        image2 = tfk.layers.Input(self.p.img_size + (3,), name="image2")
+        self.depth_net = self._build_depth_model()
+        self.pose_net = self._build_pose_model()
 
-        # disparity from image1
-        disp1 = self.disp_decoder(self.disp_encoder(image1))
+    def _build_depth_model(self) -> tfk.Model:
+        image = tfk.layers.Input(self.p.img_size + (3,), name="image")
 
-        # disparity from image2
-        disp2 = self.disp_decoder(self.disp_encoder(image2))
+        feats = self.disp_encoder(image)
+        disp = self.disp_decoder(feats)
+        depth = self.inverse(disp)
 
-        # pose from image1 to image2
-        image_concat12 = self.concat([image1, image2])
-        c1_T_c2 = self.pose_decoder(self.pose_encoder(image_concat12))
-
-        image_concat21 = self.concat([image2, image1])
-        c2_T_c1 = self.pose_decoder(self.pose_encoder(image_concat21))
-
-        inputs = {"image1": image1, "image2": image2}
         outputs = {
-            "disp1": disp1,
-            "disp2": disp2,
-            "depth1": self.inverse(disp1),
-            "depth2": self.inverse(disp2),
-            "c1_T_c2": c1_T_c2,
-            "c2_T_c1": c2_T_c1,
+            "disparity": disp,
+            "depth": depth,
         }
 
-        return tfk.Model(inputs=inputs, outputs=outputs)
+        return tfk.Model(inputs=image, outputs=outputs)
+
+    def _build_pose_model(self) -> tfk.Model:
+        image1 = tfk.layers.Input(self.p.img_size + (3,), name="image1")
+        image2 = tfk.layers.Input(self.p.img_size + (3,), name="image2")
+        image_concat = self.concat([image1, image2])
+        c1_T_c2 = self.pose_decoder(self.pose_encoder(image_concat))
+
+        inputs = {"image1": image1, "image2": image2}
+
+        return tfk.Model(inputs=inputs, outputs=c1_T_c2)
+
+    def save(self, output_dir: str) -> None:
+        self.depth_net.save(os.path.join(output_dir, "depth_net"))
+        self.pose_net.save(os.path.join(output_dir, "pose_net"))
+
+    def load_weights(self, weights_dir: str) -> None:
+        self.depth_net.load_weights(os.path.join(weights_dir, "depth_net"))
+        self.pose_net.load_weights(os.path.join(weights_dir, "pose_net"))
+
+    @property
+    def trainable_variables(self):
+        return self.depth_net.trainable_variables + self.pose_net.trainable_variables
 
 if __name__ == "__main__":
     sc_sfm = SCSFM()
-    model = sc_sfm.build_model()
-    model.summary()
+    sc_sfm.depth_net.summary()
+    sc_sfm.pose_net.summary()

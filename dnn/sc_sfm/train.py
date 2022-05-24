@@ -25,7 +25,6 @@ class Trainer:
 
         # model
         self.sc_sfm = SCSFM(self.p.model)
-        self.model = self.sc_sfm.build_model()
         if self.args.load is not None:
             self.model.load_weights(self.args.load)
             print(f"Weights loaded from {self.args.load}")
@@ -69,42 +68,72 @@ class Trainer:
         pose1 = Pose3D.from_storage(data["pose1"]) @ ned_T_edn
         pose2 = Pose3D.from_storage(data["pose2"]) @ ned_T_edn
         with tf.GradientTape() as tape:
-            outputs = self.model(data)
+            depth1 = self.sc_sfm.depth_net(data["image1"])
+            depth2 = self.sc_sfm.depth_net(data["image2"])
+            c1_T_c2 = Pose3D.from_se3(self.sc_sfm.pose_net({
+                "image1": data["image1"],
+                "image2": data["image2"],
+            }))
+            c2_T_c1 = Pose3D.from_se3(self.sc_sfm.pose_net({
+                "image1": data["image2"],
+                "image2": data["image1"],
+            }))
+            w = self.p.loss.weights
+
+            # full unsupervised pass
             img_loss, geo_loss, smooth_loss = self.loss.all_loss(
                 img1_bhw3=data["image1"],
                 img2_bhw3=data["image2"],
-                depth1_bhw1=outputs["depth1"],
-                depth2_bhw1=outputs["depth2"],
-                disp1_bhw1=outputs["disp1"],
-                disp2_bhw1=outputs["disp2"],
-                c1_T_c2=Pose3D.from_se3(outputs["c1_T_c2"]),
-                c2_T_c1=Pose3D.from_se3(outputs["c2_T_c1"]),
-                #c1_T_c2=pose1.inv() @ pose2,
-                #c2_T_c1=pose2.inv() @ pose1,
+                depth1_bhw1=depth1["depth"],
+                depth2_bhw1=depth2["depth"],
+                disp1_bhw1=depth1["disparity"],
+                disp2_bhw1=depth2["disparity"],
+                c1_T_c2=c1_T_c2,
+                c2_T_c1=c2_T_c1,
             )
-            tf.summary.scalar("img_loss", img_loss)
-            tf.summary.scalar("geo_loss", geo_loss)
-            tf.summary.scalar("smooth_loss", smooth_loss)
+            unsup_loss = w.img * img_loss + w.geo * geo_loss + w.smooth * smooth_loss
+            tf.summary.scalar("unsup_img_loss", img_loss)
+            tf.summary.scalar("unsup_geo_loss", geo_loss)
+            tf.summary.scalar("unsup_smooth_loss", smooth_loss)
+            tf.summary.scalar("unsup_loss", unsup_loss)
 
-            w = self.p.loss.weights
-            loss = w.img * img_loss + w.geo * geo_loss + w.smooth * smooth_loss
+            # semi-supervised pass with gt poses
+            img_loss, geo_loss, smooth_loss = self.loss.all_loss(
+                img1_bhw3=data["image1"],
+                img2_bhw3=data["image2"],
+                depth1_bhw1=depth1["depth"],
+                depth2_bhw1=depth2["depth"],
+                disp1_bhw1=depth1["disparity"],
+                disp2_bhw1=depth2["disparity"],
+                c1_T_c2=pose1.inv() @ pose2,
+                c2_T_c1=pose2.inv() @ pose1,
+            )
+            sup_loss = w.img * img_loss + w.geo * geo_loss + w.smooth * smooth_loss
+            tf.summary.scalar("sup_img_loss", img_loss)
+            tf.summary.scalar("sup_geo_loss", geo_loss)
+            tf.summary.scalar("sup_smooth_loss", smooth_loss)
+            tf.summary.scalar("sup_loss", sup_loss)
+
+            loss = unsup_loss + sup_loss
             tf.summary.scalar("loss", loss)
-            tf.print("Loss:", loss, "img_loss:", img_loss, "geo_loss:", geo_loss, "smooth_loss:", smooth_loss)
 
-        grads = tape.gradient(loss, self.model.trainable_variables)
-        optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+            tf.print("Loss:", loss)
+
+        grads = tape.gradient(loss, self.sc_sfm.trainable_variables)
+        optimizer.apply_gradients(zip(grads, self.sc_sfm.trainable_variables))
 
         if self.global_step % self.p.trainer.img_log_freq == 0:
             tf.summary.image("image", data["image1"])
-            disp_max = tf.reduce_max(outputs["disp1"], axis=(1, 2, 3), keepdims=True)
-            disp_min = tf.reduce_min(outputs["disp1"], axis=(1, 2, 3), keepdims=True)
-            tf.summary.image("disparity", (outputs["disp1"] - disp_min) / (disp_max - disp_min))
+            disp_max = tf.reduce_max(depth1["disparity"], axis=(1, 2, 3), keepdims=True)
+            disp_min = tf.reduce_min(depth1["disparity"], axis=(1, 2, 3), keepdims=True)
+            tf.summary.image("disparity", (depth1["disparity"] - disp_min) / \
+                                          (disp_max - disp_min))
 
     def train(self):
         optimizer = tfk.optimizers.Adam(1e-4)
         for i in range(self.p.trainer.num_epochs):
             print(f"------ Saving Checkpoint ------")
-            self.model.save(os.path.join(self.ckpt_dir, f"epoch-{i}"))
+            self.sc_sfm.save(os.path.join(self.ckpt_dir, f"epoch-{i}"))
             print(f"------ Starting Epoch {i} ------")
             with self.train_writer.as_default():
                 for data in self.train_ds:
