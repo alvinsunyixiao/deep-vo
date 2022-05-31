@@ -26,8 +26,7 @@ class Trainer:
         # model
         self.sc_sfm = SCSFM(self.p.model)
         if self.args.load is not None:
-            self.model.load_weights(self.args.load)
-            print(f"Weights loaded from {self.args.load}")
+            self.sc_sfm.load_weights(self.args.load)
 
         # loss
         self.loss = LossManager(self.p.loss)
@@ -118,6 +117,8 @@ class Trainer:
             tf.summary.scalar("loss", loss)
 
             tf.print("Loss:", loss)
+            #tf.print(tf.histogram_fixed_width(depth1["depth"], (0, 100), 5))
+            #tf.print(c1_T_c2.to_se3())
 
         grads = tape.gradient(loss, self.sc_sfm.trainable_variables)
         optimizer.apply_gradients(zip(grads, self.sc_sfm.trainable_variables))

@@ -30,8 +30,8 @@ class SameConvBnRelu(tfk.layers.Layer):
             strides=strides,
             padding="same",
             kernel_initializer="he_normal",
-            kernel_regularizer=tfk.regularizers.l2(1e-4),
-            bias_regularizer=tfk.regularizers.l2(1e-4),
+            #kernel_regularizer=tfk.regularizers.l2(1e-4),
+            #bias_regularizer=tfk.regularizers.l2(1e-4),
             name="conv",
             use_bias=not has_bn,
         )

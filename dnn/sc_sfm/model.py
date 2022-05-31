@@ -1,7 +1,9 @@
 import os
 import tensorflow as tf
 import typing as T
-from tensorflow import keras as tfk
+import tensorflow.keras as tfk
+if T.TYPE_CHECKING:
+    from keras.api._v2 import keras as tfk
 
 from dnn.baseline.model import ResidualGroup, SameConvBnRelu
 from utils.params import ParamDict
@@ -30,14 +32,43 @@ class Resnet18Encoder(tfk.layers.Layer):
 
         return features
 
+class Conv2DReflect(tfk.layers.Layer):
+    def __init__(self, filters: int, kernel_size: int, activation: str = "elu", **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        self.filters = filters
+        self.kernel_size = kernel_size
+        self.activation = activation
+
+        self.conv = tfk.layers.Conv2D(
+            filters=filters,
+            kernel_size=kernel_size,
+            padding="valid",
+            activation=activation,
+        )
+
+    def get_config(self) -> T.Dict[str, T.Any]:
+        config = super().get_config()
+        config.update({
+            "filters": self.filters,
+            "kernel_size": self.kernel_size,
+            "activation": self.activation,
+        })
+        return config
+
+    def call(self, x: tf.Tensor) -> tf.Tensor:
+        p = self.kernel_size // 2
+        x = tf.pad(x, [[0, 0], [p, p], [p, p], [0, 0]], mode="REFLECT")
+        x = self.conv(x)
+        return x
+
 class Conv3x3Upsample(tfk.layers.Layer):
     def __init__(self, filters: int, **kwargs) -> None:
         super().__init__(**kwargs)
 
         self.filters = filters
-        # TODO(alvin): try reflection padding
-        self.conv = tfk.layers.Conv2D(filters, 3, activation="relu", padding="same", name="conv3x3")
-        self.upsample = tfk.layers.UpSampling2D(2, interpolation="bilinear", name="upsample")
+        self.conv = Conv2DReflect(filters, 3, name="conv3x3")
+        self.upsample = tfk.layers.UpSampling2D(2, interpolation="nearest", name="upsample")
 
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
@@ -70,8 +101,7 @@ class DisparityDecoder(tfk.layers.Layer):
 
         for i, ch in enumerate(num_channels):
             self.upsamples.append(Conv3x3Upsample(ch, name=f"upsample_{i}"))
-            self.proj_convs.append(
-                tfk.layers.Conv2D(ch, 3, padding="same", activation="relu", name=f"proj_conv_{i}"))
+            self.proj_convs.append(Conv2DReflect(ch, 3, name=f"proj_conv_{i}"))
 
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
@@ -96,14 +126,17 @@ class DisparityDecoder(tfk.layers.Layer):
         return disp
 
 class PoseDecoder(tfk.layers.Layer):
-    def __init__(self, filters=256, num_layers=3, output_scale=1e-2, **kwargs):
+    def __init__(self,
+                 filters: int = 256,
+                 num_layers: int = 3,
+                 output_scale: int = 1e-2,
+                 **kwargs):
         super().__init__(**kwargs)
 
         self.filters = filters
         self.num_layers = num_layers
         self.output_scale = output_scale
 
-        self.relu1 = tfk.layers.ReLU(name="relu1")
         self.convs = []
         for i in range(num_layers):
             self.convs.append(tfk.layers.Conv2D(
@@ -111,7 +144,11 @@ class PoseDecoder(tfk.layers.Layer):
                 activation="relu",
                 name=f"conv_{i}",
             ))
-        self.pose_conv = tfk.layers.Conv2D(6, 1, name="pose_conv")
+        self.pose_conv = tfk.layers.Conv2D(
+            filters=6,
+            kernel_size=1,
+            name="pose_conv",
+        )
         self.pool = tfk.layers.GlobalAvgPool2D(name="global_avg_pool")
 
     def get_config(self) -> T.Dict[str, T.Any]:
@@ -180,8 +217,14 @@ class SCSFM:
         self.pose_net.save(os.path.join(output_dir, "pose_net"))
 
     def load_weights(self, weights_dir: str) -> None:
-        self.depth_net.load_weights(os.path.join(weights_dir, "depth_net"))
-        self.pose_net.load_weights(os.path.join(weights_dir, "pose_net"))
+        depth_dir = os.path.join(weights_dir, "depth_net")
+        pose_dir = os.path.join(weights_dir, "pose_net")
+        if os.path.isdir(depth_dir):
+            self.depth_net.load_weights(depth_dir)
+            print(f"[Weight Loaded] DepthNet: {depth_dir}")
+        if os.path.isdir(pose_dir):
+            self.pose_net.load_weights(pose_dir)
+            print(f"[Weight Loaded] PoseNet: {pose_dir}")
 
     @property
     def trainable_variables(self):

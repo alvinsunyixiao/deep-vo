@@ -78,8 +78,12 @@ class LossManager:
         img_proj_bhw3 = tfa.image.resampler(img_src_bhw3, pixel_src_bhw2)
         depth_proj_bhw1 = tfa.image.resampler(depth_src_bhw1, pixel_src_bhw2)
 
+        # occlusion aware mask
+        no_occlusion_mask_bhw1 = tf.cast(depth_proj_bhw1 >= depth_computed_bhw1, tf.float32)
+        valid_mask_bhw1 *= no_occlusion_mask_bhw1
+
         # geometric loss
-        depth_l1_bhw1 = tf.abs(depth_computed_bhw1 - depth_proj_bhw1)
+        depth_l1_bhw1 = tf.abs(depth_proj_bhw1 - depth_computed_bhw1)
         depth_diff_bhw1 = depth_l1_bhw1 / tf.stop_gradient(depth_computed_bhw1 + depth_proj_bhw1)
         depth_diff_bhw1 = tf.clip_by_value(depth_diff_bhw1, 0., 1.)
         geo_loss = tf.reduce_sum(depth_diff_bhw1 * valid_mask_bhw1)

@@ -113,9 +113,11 @@ class Pose3D:
             tf.assert_equal(tf.shape(other)[:-1], self.shape, "batch dimensions do not match")
             return self.R @ other + self.t
 
-    def to_se3(self, eps: float = 1e-4) -> tf.Tensor:
-        return self.to_pseudo_se3()
+    def to_se3(self, eps: float = 1e-4, pseudo: bool = True) -> tf.Tensor:
         w = self.R.to_so3(eps)
+        if pseudo:
+            return tf.concat([self.t, w], axis=-1)
+
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
         t = self.t
         wt = tf.linalg.cross(w, t)
@@ -128,10 +130,6 @@ class Pose3D:
         t_safe = tf.where(theta < eps, x=t, y=tp)
 
         return tf.concat([t_safe, w], axis=-1)
-
-    def to_pseudo_se3(self) -> tf.Tensor:
-        w = self.R.to_so3()
-        return tf.concat([self.t, w], axis=-1)
 
     def to_storage(self) -> tf.Tensor:
         return tf.concat([self.R.quat, self.t], axis=-1)
@@ -172,11 +170,20 @@ class Pose3D:
         )
 
     @classmethod
-    def from_se3(cls, se3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-4) -> Pose3D:
+    def from_se3(cls,
+                 se3: T.Union[tf.Tensor, np.ndarray],
+                 eps: float = 1e-4,
+                 pseudo: bool = True) -> Pose3D:
         tf.assert_equal(tf.shape(se3)[-1], 6, "se3 vectors must be size-6")
         t = se3[..., :3]
         w = se3[..., 3:]
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
+
+        if pseudo:
+            return Pose3D(
+                position=t,
+                orientation=Rot3D.from_so3(w, eps)
+            )
 
         wt = tf.linalg.cross(w, t)
         wwt = tf.linalg.cross(w, wt)
