@@ -59,7 +59,7 @@ if __name__ == "__main__":
     val_ds = data_pipe.build_val_ds()
 
     model = DeepPoseTrain(p.model).build_model()
-    model.compile(tfk.optimizers.Adam(clipnorm=1.))
+    model.compile(tfk.optimizers.Adam())
 
     if args.load is not None:
         print(f"Restored weights from {args.load}")
