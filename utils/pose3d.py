@@ -30,7 +30,7 @@ class Rot3D:
     def shape(self) -> T.Tuple[int, ...]:
         return tf.shape(self.quat)[:-1]
 
-    def to_so3(self, eps: float = 1e-4) -> tf.Tensor:
+    def to_so3(self, eps: float = 1e-6) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
         w = a * theta
         return tf.where(theta < eps, x=tf.zeros_like(w), y=w)
@@ -62,7 +62,7 @@ class Rot3D:
         return Rot3D(quaternion.from_rotation_matrix(rot_mat))
 
     @classmethod
-    def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-4) -> Rot3D:
+    def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-6) -> Rot3D:
         theta = tf.linalg.norm(so3, axis=-1, keepdims=True)
         axis = tf.math.divide_no_nan(so3, theta)
         q = quaternion.from_axis_angle(axis, theta)
@@ -113,7 +113,7 @@ class Pose3D:
             tf.assert_equal(tf.shape(other)[:-1], self.shape, "batch dimensions do not match")
             return self.R @ other + self.t
 
-    def to_se3(self, eps: float = 1e-4, pseudo: bool = True) -> tf.Tensor:
+    def to_se3(self, eps: float = 1e-6, pseudo: bool = True) -> tf.Tensor:
         w = self.R.to_so3(eps)
         if pseudo:
             return tf.concat([self.t, w], axis=-1)
@@ -172,7 +172,7 @@ class Pose3D:
     @classmethod
     def from_se3(cls,
                  se3: T.Union[tf.Tensor, np.ndarray],
-                 eps: float = 1e-4,
+                 eps: float = 1e-6,
                  pseudo: bool = True) -> Pose3D:
         tf.assert_equal(tf.shape(se3)[-1], 6, "se3 vectors must be size-6")
         t = se3[..., :3]
