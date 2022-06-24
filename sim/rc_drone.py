@@ -1,7 +1,6 @@
 import airsim
 import argparse
 import datetime
-import threading
 import time
 import os
 
@@ -9,8 +8,6 @@ import numpy as np
 
 from utils.ps4_controller import PS4Controller
 from sim.randomize import randomize_time, randomize_weather, clear_weather
-
-CLIENT_LOCK = threading.Lock()
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -27,26 +24,28 @@ if __name__ == "__main__":
     client.confirmConnection()
     client.enableApiControl(True)
     client.armDisarm(True)
-    client.simEnableWeather(True)
 
-    controller = PS4Controller()
-    controller.register_button_callback(controller.O,
-        lambda: randomize_weather(client, client_lock=CLIENT_LOCK))
-    controller.register_button_callback(controller.SQUARE,
-        lambda: clear_weather(client, client_lock=CLIENT_LOCK))
-    controller.register_button_callback(controller.TRIANGLE,
-        lambda: randomize_time(client, client_lock=CLIENT_LOCK))
+    client_env = airsim.MultirotorClient()
+    client_env.confirmConnection()
+    client_env.simEnableWeather(True)
 
-    with controller:
+    with PS4Controller() as controller:
+        # register event callback
+        controller.register_button_callback(controller.O,
+            lambda: randomize_weather(client_env))
+        controller.register_button_callback(controller.SQUARE,
+            lambda: clear_weather(client_env))
+        controller.register_button_callback(controller.TRIANGLE,
+            lambda: randomize_time(client_env))
+
+        # main control loop
         while not controller.buttons[controller.X]:
-            with CLIENT_LOCK:
-                kinematics = client.simGetGroundTruthKinematics()
-                client.moveByRollPitchYawrateThrottleAsync(
-                    roll=controller.axes[controller.RIGHT_LR] * .6,
-                    pitch=-controller.axes[controller.RIGHT_UD] * .6,
-                    yaw_rate=-controller.axes[controller.LEFT_LR] * 2.,
-                    throttle=(-controller.axes[controller.LEFT_UD] + 1) / 2,
-                    duration=0.2,
-                )
+            client.moveByRollPitchYawrateThrottleAsync(
+                roll=controller.axes[controller.RIGHT_LR] * 1.,
+                pitch=-controller.axes[controller.RIGHT_UD] * 1.,
+                yaw_rate=-controller.axes[controller.LEFT_LR] * 2.,
+                throttle=(-controller.axes[controller.LEFT_UD] + 1) / 2,
+                duration=0.2,
+            )
             time.sleep(0.01)
 
