@@ -35,6 +35,8 @@ def parse_args():
                         help="maximum translational perturbation in [m]")
     parser.add_argument("--viz", action="store_true",
                         help="briefly pause between frames to visualize")
+    parser.add_argument("--shard-index-start", type=int, default=0,
+                        help="starting index of the shards")
     return parser.parse_args()
 
 
@@ -57,7 +59,7 @@ if __name__ == "__main__":
         max_rp=(np.pi / 4, np.pi / 4),
     )
 
-    writer = ShardedTFRecordWriter(output_dir, args.shard_size)
+    writer = ShardedTFRecordWriter(output_dir, args.shard_size, args.shard_index_start)
     with tqdm(total=args.num_samples) as pbar, writer:
         while pbar.n < args.num_samples:
             base_pose = pose_gen()
@@ -112,6 +114,7 @@ if __name__ == "__main__":
                     datum[f"{location}_poses"].append(airsim_to_pose3d(camera_pose).to_storage())
 
                     # save distance histogram
+                    depth = np.asarray(responses[i+3].image_data_float)
                     hist, _ = np.histogram(depth, np.arange(300))
                     datum[f"{location}_dists"].append(hist / depth.shape[0])
 

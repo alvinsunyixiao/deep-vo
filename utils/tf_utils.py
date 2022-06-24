@@ -23,10 +23,10 @@ def const_to_feature(data: T.List[T.Any], dtype=None):
     return tensor_to_feature(tf.constant(data, dtype=dtype))
 
 class ShardedTFRecordWriter:
-    def __init__(self, output_dir: str, shard_size: int):
+    def __init__(self, output_dir: str, shard_size: int, start_index: int = 0):
         self.output_dir = output_dir
         self.shard_size = shard_size
-        self._shard_cnt = 0
+        self._shard_cnt = start_index
         self._sample_cnt = 0
 
     def __enter__(self):

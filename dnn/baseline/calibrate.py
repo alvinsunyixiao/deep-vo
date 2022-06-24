@@ -5,8 +5,8 @@ import tensorflow.keras as tfk
 from distribution import GaussianDynamicDiagVar
 from scod import SCOD
 from sketching import GaussianSketchOp
-from dnn.data import VODataPipe
-from dnn.model import DeepPose
+from dnn.baseline.data import VODataPipe
+from dnn.baseline.model import DeepPose
 from utils.params import ParamDict
 from utils.tf_utils import set_tf_memory_growth
 
