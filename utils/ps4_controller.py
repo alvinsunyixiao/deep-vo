@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import logging
 import platform
 import pygame
 import queue
@@ -21,7 +24,7 @@ class PS4Controller:
     RIGHT_LR = 2 if platform.system() == "Windows" else 3
     RIGHT_UD = 3 if platform.system() == "Windows" else 4
 
-    def __init__(self, joystick_id: int = 0):
+    def __init__(self, joystick_id: int = 0) -> None:
         self.joystick_id = joystick_id
         self.terminate_evt = threading.Event()
         self.axes = defaultdict(float)
@@ -29,19 +32,21 @@ class PS4Controller:
         self.button_callbacks = {}
         self.step = 0
 
-    def __enter__(self):
+    def __enter__(self) -> PS4Controller:
         self.terminate_evt.clear()
         self.event_t = threading.Thread(target=self._event_loop)
         self.event_t.start()
 
-    def __exit__(self, exc_type, exc_value, traceback):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.terminate_evt.set()
         self.event_t.join()
 
-    def register_button_callback(self, button_id: int, func: T.Callable[[], None]):
+    def register_button_callback(self, button_id: int, func: T.Callable[[], None]) -> None:
         self.button_callbacks[button_id] = func
 
-    def _event_loop(self):
+    def _event_loop(self) -> None:
         pygame.init()
         joy = pygame.joystick.Joystick(self.joystick_id)
         joy.init()
@@ -59,7 +64,7 @@ class PS4Controller:
                     self.buttons[event.button] = False
 
         joy.quit()
-        print("Joystick quitted gracefully")
+        logging.info("Joystick quitted gracefully")
 
 
 if __name__ == "__main__":
