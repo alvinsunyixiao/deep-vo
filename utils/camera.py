@@ -128,9 +128,6 @@ class PinholeCam:
         p_tgt, p_tgt_D_depth_tgt = self.unproject_with_jac(depth_tgt, pixel_tgt)
         p_src = src_T_tgt @ p_tgt
         pz_src = p_src[..., -1]
-        #pz_src = tf.maximum(p_src[..., -1], 1e-3)
-        #pz_src = pz_src[..., tf.newaxis]
-        #p_src = tf.concat([p_src[..., :2], pz_src], axis=-1)
         pixel_src, pixel_src_D_p_src = self.project_with_jac(p_src)
 
         # jacobian w.r.t. depth
