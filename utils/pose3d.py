@@ -13,9 +13,13 @@ class Rot3D:
     """
     3D rotation represented with a quaternion [x, y, z, w]
     """
-    def __init__(self, quaternion: T.Union[tf.Tensor, np.ndarray]):
+    def __init__(self,
+        quaternion: T.Union[tf.Tensor, np.ndarray],
+        dtype: tf.DType = tf.float32
+    ) -> None:
         tf.assert_equal(tf.shape(quaternion)[-1], 4, "quaternion must be size-4 vector(s)")
-        self.quat = tf.cast(quaternion, tf.float32)
+        self.quat = tf.cast(quaternion, dtype)
+        self.dtype = dtype
 
     def inv(self) -> Rot3D:
         return Rot3D(quaternion.inverse(self.quat))
@@ -27,8 +31,8 @@ class Rot3D:
             return quaternion.rotate(other, self.quat)
 
     @property
-    def shape(self) -> T.Tuple[int, ...]:
-        return tf.shape(self.quat)[:-1]
+    def shape(self) -> tf.TensorShape:
+        return tf.TensorShape(tf.shape(self.quat)[:-1])
 
     def to_so3(self, eps: float = 1e-6) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
@@ -50,7 +54,7 @@ class Rot3D:
     def __getitem__(self, key) -> Rot3D:
         return Rot3D(self.quat[key])
 
-    def broadcast_to(self, shape) -> Rot3D:
+    def broadcast_to(self, shape: T.Union[T.Sequence[int], tf.TensorShape, tf.Tensor]) -> Rot3D:
         return Rot3D(tf.broadcast_to(self.quat, tf.concat([shape, [4]], axis=0)))
 
     @classmethod
@@ -79,11 +83,16 @@ class Rot3D:
 
 
 class Pose3D:
-    def __init__(self, orientation: Rot3D, position: T.Union[tf.Tensor, np.ndarray]):
+    def __init__(self,
+        orientation: Rot3D,
+        position: T.Union[tf.Tensor, np.ndarray],
+        dtype: tf.DType = tf.float32
+    ) -> None:
         tf.assert_equal(tf.shape(position)[-1], 3, "position must be size-3 vector(s)")
         tf.assert_equal(orientation.shape, tf.shape(position)[:-1], "batch dimensions do not match")
         self.R = orientation
-        self.t = tf.cast(position, dtype=tf.float32)
+        self.t = tf.cast(position, dtype=dtype)
+        self.dtype = dtype
 
     def inv(self) -> Pose3D:
         R_inv = self.R.inv()
@@ -93,7 +102,7 @@ class Pose3D:
         )
 
     @property
-    def shape(self) -> T.Tuple[int, ...]:
+    def shape(self) -> tf.TensorShape:
         return self.R.shape
 
     def flatten(self) -> Pose3D:
@@ -116,7 +125,7 @@ class Pose3D:
     def to_se3(self, eps: float = 1e-6, pseudo: bool = True) -> tf.Tensor:
         w = self.R.to_so3(eps)
         if pseudo:
-            return tf.concat([self.t, w], axis=-1)
+            return tf.concat([w, self.t], axis=-1)
 
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
         t = self.t
@@ -129,7 +138,7 @@ class Pose3D:
             ) * wwt
         t_safe = tf.where(theta < eps, x=t, y=tp)
 
-        return tf.concat([t_safe, w], axis=-1)
+        return tf.concat([w, t_safe], axis=-1)
 
     def to_storage(self) -> tf.Tensor:
         return tf.concat([self.R.quat, self.t], axis=-1)
@@ -140,7 +149,7 @@ class Pose3D:
     def __getitem__(self, key) -> Pose3D:
         return Pose3D(self.R[key], self.t[key])
 
-    def broadcast_to(self, shape) -> Pose3D:
+    def broadcast_to(self, shape: T.Union[T.Sequence[int], tf.TensorShape, tf.Tensor]) -> Pose3D:
         return Pose3D(self.R.broadcast_to(shape),
                       tf.broadcast_to(self.t, tf.concat([shape, [3]], axis=0)))
 
@@ -175,8 +184,8 @@ class Pose3D:
                  eps: float = 1e-6,
                  pseudo: bool = True) -> Pose3D:
         tf.assert_equal(tf.shape(se3)[-1], 6, "se3 vectors must be size-6")
-        t = se3[..., :3]
-        w = se3[..., 3:]
+        w = se3[..., :3]
+        t = se3[..., 3:]
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
 
         if pseudo:
