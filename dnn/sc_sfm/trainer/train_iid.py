@@ -12,13 +12,6 @@ from utils.params import ParamDict
 from utils.pose3d import Pose3D, Rot3D
 
 class Trainer:
-
-    DEFAULT_PARAMS = ParamDict(
-        num_epochs = 300,
-        save_freq = 2,
-        img_log_freq = 500,
-    )
-
     def __init__(self):
         self.args = self._parse_args()
         self.p = ParamDict.from_file(self.args.params)

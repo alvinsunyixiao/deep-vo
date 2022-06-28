@@ -84,20 +84,18 @@ class Conv3x3Upsample(tfk.layers.Layer):
 class DisparityDecoder(tfk.layers.Layer):
     def __init__(self,
         num_channels: T.Sequence[int] = [16, 32, 64, 128, 256],
-        alpha: float = 2.,
-        beta: float = 2e-3,
+        min_disp: int = 1e-4,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
 
         self.num_channels = num_channels
-        self.alpha = alpha
-        self.beta = beta
+        self.min_disp = min_disp
 
         self.upsamples = []
         self.proj_convs = []
         self.disp_conv = tfk.layers.Conv2D(1, 3,
-            padding="same", activation="sigmoid", name="disp_conv")
+            padding="same", activation="softplus", name="disp_conv")
 
         for i, ch in enumerate(num_channels):
             self.upsamples.append(Conv3x3Upsample(ch, name=f"upsample_{i}"))
@@ -107,8 +105,7 @@ class DisparityDecoder(tfk.layers.Layer):
         config = super().get_config()
         config.update({
             "num_channels": self.num_channels,
-            "alpha": self.alpha,
-            "beta": self.beta,
+            "min_disp": self.min_disp,
         })
         return config
 
@@ -121,7 +118,7 @@ class DisparityDecoder(tfk.layers.Layer):
                 x = tf.concat([x, features[i - 1]], axis=-1)
             x = self.proj_convs[i](x)
             if i == 0:
-                disp = self.alpha * self.disp_conv(x) + self.beta
+                disp = self.disp_conv(x) + self.min_disp
 
         return disp
 

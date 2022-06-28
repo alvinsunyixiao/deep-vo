@@ -14,18 +14,23 @@ from utils.camera import PinholeCam
 class DataAirsimSeq:
 
     DEFAULT_PARAMS = ParamDict(
+        # root to data generated from sim/stereo_record.py
         data_root = "/data/airsim/multirotor",
+        # train portion
         train_split = 0.9,
+        # camera intrinsics
         camera = PinholeCam(
             focal = np.array([73.9, 73.9]),
             center = np.array([128., 80.]),
         ),
+        # stereo camera extrinsic in EDN coordinate
         left_T_right = Pose3D(
             orientation = Rot3D.identity(),
-            position = np.array([0., .25, 0.]),
+            position = np.array([.25, 0., 0.]),
         ),
+        # parallel data pipeline
         num_parallel_calls=tf.data.AUTOTUNE,
-        batch_size = 32,
+        batch_size = 16,
     )
 
     def __init__(self, params: ParamDict=DEFAULT_PARAMS) -> None:
@@ -48,6 +53,12 @@ class DataAirsimSeq:
         # build tf datasets
         self.train_ds = self.build_dataset(self.train_data)
         self.val_ds = self.build_dataset(self.val_data)
+
+    def build_train_ds(self) -> tf.data.Dataset:
+        return self.build_dataset(self.train_data, training=True)
+
+    def build_val_ds(self) -> tf.data.Dataset:
+        return self.build_dataset(self.val_data, training=False)
 
     def _read_image(self, img_path: tf.Tensor) -> tf.Tensor:
         img_file = tf.io.read_file(img_path)

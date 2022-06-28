@@ -138,7 +138,7 @@ class PinholeCam:
         # forward reproject computation
         p_tgt, p_tgt_D_depth_tgt = self.unproject_with_jac(depth_tgt, pixel_tgt)
         p_src = src_T_tgt @ p_tgt
-        pz_src = p_src[..., -1]
+        pz_src = p_src[..., -1, tf.newaxis]
         pixel_src, pixel_src_D_p_src = self.project_with_jac(p_src)
 
         # jacobian w.r.t. depth
