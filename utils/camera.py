@@ -24,7 +24,7 @@ class PinholeCam:
 
     @property
     def shape(self) -> tf.TensorShape:
-        return tf.TensorShape(tf.shape(self.focal)[:-1])
+        return self.focal.get_shape()[:-1]
 
     @property
     def fx(self) -> tf.Tensor:
@@ -44,6 +44,17 @@ class PinholeCam:
 
     def to_matrix(self) -> tf.Tensor:
         return camera.perspective.matrix_from_intrinsics(self.focal, self.center)
+
+    def to_storage(self) -> tf.Tensor:
+        return tf.concat([self.focal, self.center], axis=-1)
+
+    @classmethod
+    def from_storage(cls, data: tf.Tensor) -> PinholeCam:
+        tf.assert_equal(tf.shape(data)[-1], 4, "PinholeCam has a storage dimension of 4")
+        return cls(
+            focal=data[..., :2],
+            center=data[..., 2:],
+        )
 
     def __repr__(self) -> str:
         return f"PinholeCam(focal={self.focal}, center={self.center})"

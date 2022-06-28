@@ -28,7 +28,7 @@ class VODataPipe:
         max_occlusion_dist = 4,
     )
 
-    def __init__(self, params: ParamDict = DEFAULT_PARAMS):
+    def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
         self.p = params
 
     def build_train_ds(self, dirname: str = "train") -> tf.data.Dataset:
@@ -79,8 +79,7 @@ class VODataPipe:
         return tf.cast(image, tf.float32) / 255.
 
     def _image_aug(self, images_vhw3: tf.Tensor) -> tf.Tensor:
-        images_vhw3 = tf.image.random_brightness(images_vhw3, 0.1)
-        images_vhw3 = tf.image.random_brightness(images_vhw3, 0.3)
+        images_vhw3 = tf.image.random_brightness(images_vhw3, 0.2)
         images_vhw3 = tf.image.random_contrast(images_vhw3, .5, 2.)
         images_vhw3 += tf.random.normal(tf.shape(images_vhw3), stddev=0.05)
         return images_vhw3

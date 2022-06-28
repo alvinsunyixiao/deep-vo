@@ -32,7 +32,7 @@ class Rot3D:
 
     @property
     def shape(self) -> tf.TensorShape:
-        return tf.TensorShape(tf.shape(self.quat)[:-1])
+        return self.quat.get_shape()[:-1]
 
     def to_so3(self, eps: float = 1e-6) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
