@@ -81,46 +81,57 @@ class Conv3x3Upsample(tfk.layers.Layer):
 
         return x
 
-class DisparityDecoder(tfk.layers.Layer):
+class DepthDecoder(tfk.layers.Layer):
     def __init__(self,
         num_channels: T.Sequence[int] = [16, 32, 64, 128, 256],
-        min_disp: int = 1e-4,
+        num_scales: int = 4,
+        min_depth: float = 1e-3,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
 
         self.num_channels = num_channels
-        self.min_disp = min_disp
+        self.num_scales = num_scales
+        self.min_depth = min_depth
 
         self.upsamples = []
         self.proj_convs = []
-        self.disp_conv = tfk.layers.Conv2D(1, 3,
-            padding="same", activation="softplus", name="disp_conv")
+        self.depth_convs = []
 
         for i, ch in enumerate(num_channels):
             self.upsamples.append(Conv3x3Upsample(ch, name=f"upsample_{i}"))
             self.proj_convs.append(Conv2DReflect(ch, 3, name=f"proj_conv_{i}"))
 
+        for i in range(self.num_scales):
+            self.depth_convs.append(tfk.layers.Conv2D(1, 3,
+                padding="same", activation="softplus", name=f"depth_conv_{i}"))
+
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
         config.update({
             "num_channels": self.num_channels,
-            "min_disp": self.min_disp,
+            "num_scales": self.num_scales,
+            "min_depth": self.min_depth,
         })
         return config
 
     def call(self, features):
         x = features[-1]
 
+        depths = []
+
         for i in range(len(self.num_channels) - 1, -1, -1):
             x = self.upsamples[i](x)
             if i > 0:
                 x = tf.concat([x, features[i - 1]], axis=-1)
             x = self.proj_convs[i](x)
-            if i == 0:
-                disp = self.disp_conv(x) + self.min_disp
 
-        return disp
+            if i < self.num_scales:
+                depth = self.depth_convs[i](x)
+                depth = tf.maximum(depth, self.min_depth)
+                depths.insert(0, depth)
+
+        return depths
 
 class PoseDecoder(tfk.layers.Layer):
     def __init__(self,
@@ -175,12 +186,11 @@ class SCSFM:
     def __init__(self, params=DEFAULT_PARAMS):
         self.p = params
 
-        self.disp_encoder = Resnet18Encoder(name="disp_encoder")
-        self.disp_decoder = DisparityDecoder(name="disp_decoder")
+        self.depth_encoder = Resnet18Encoder(name="depth_encoder")
+        self.depth_decoder = DepthDecoder(name="depth_decoder")
         self.pose_encoder = Resnet18Encoder(name="pose_encoder")
         self.pose_decoder = PoseDecoder(name="pose_decoder")
         self.concat = tfk.layers.Concatenate()
-        self.inverse = tfk.layers.Lambda(lambda x: 1. / x, name="inverse")
 
         self.depth_net = self._build_depth_model()
         self.pose_net = self._build_pose_model()
@@ -188,16 +198,10 @@ class SCSFM:
     def _build_depth_model(self) -> tfk.Model:
         image = tfk.layers.Input(self.p.img_size + (3,), name="image")
 
-        feats = self.disp_encoder(image)
-        disp = self.disp_decoder(feats)
-        depth = self.inverse(disp)
+        feats = self.depth_encoder(image)
+        depth = self.depth_decoder(feats)
 
-        outputs = {
-            "disparity": disp,
-            "depth": depth,
-        }
-
-        return tfk.Model(inputs=image, outputs=outputs)
+        return tfk.Model(inputs=image, outputs=depth)
 
     def _build_pose_model(self) -> tfk.Model:
         image1 = tfk.layers.Input(self.p.img_size + (3,), name="image1")

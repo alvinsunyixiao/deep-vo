@@ -13,7 +13,7 @@ class LossManager:
     DEFAULT_PARAMS = ParamDict(
         weights = ParamDict(
             img = 1.,
-            smooth = 1e-2,
+            smooth = 1e-3,
         ),
     )
 
@@ -61,32 +61,134 @@ class LossManager:
         img_tgt_bhw3: tf.Tensor,
         depth_tgt_bhw1: tf.Tensor,
         img_src_bhw3: tf.Tensor,
+        depth_src_bhw1: tf.Tensor,
         src_T_tgt_b: Pose3D,
         cam_b: PinholeCam,
-    ) -> T.Tuple[tf.Tensor, tf.Tensor]:
+    ) -> tf.Tensor:
         # warp from src to tgt
         src_T_tgt_b11 = src_T_tgt_b[:, tf.newaxis, tf.newaxis]
         cam_b11 = cam_b[:, tf.newaxis, tf.newaxis]
-        pixel_src_bhw2, _ = cam_b11.reproject(depth_tgt_bhw1, src_T_tgt_b11)
+        pixel_src_bhw2, depth_computed_bhw1 = cam_b11.reproject(depth_tgt_bhw1, src_T_tgt_b11)
+
         img_proj_bhw3 = tfa.image.resampler(img_src_bhw3, pixel_src_bhw2)
+        depth_proj_bhw1 = tfa.image.resampler(depth_src_bhw1, pixel_src_bhw2)
+
+        h = tf.shape(img_tgt_bhw3)[1]
+        w = tf.shape(img_tgt_bhw3)[2]
+        valid_mask_bhw = (pixel_src_bhw2[..., 0] >= 0.) & \
+                         (pixel_src_bhw2[..., 0] <= tf.cast(w, tf.float32) - 0.) & \
+                         (pixel_src_bhw2[..., 1] >= 0.) & \
+                         (pixel_src_bhw2[..., 1] <= tf.cast(h, tf.float32) - 0.) & \
+                         (depth_computed_bhw1[..., 0] >= 1e-3)
+        valid_mask_bhw1 = tf.cast(valid_mask_bhw[..., tf.newaxis], tf.float32)
+
+        # occlusion aware mask
+        no_occlusion_mask_bhw1 = tf.cast(depth_proj_bhw1 >= depth_computed_bhw1, tf.float32)
+        valid_mask_bhw1 *= no_occlusion_mask_bhw1
+
+        # erode valid mask to be conservative
+        valid_mask_bhw1 = tf.nn.erosion2d(
+            value=valid_mask_bhw1,
+            filters=tf.zeros((9, 9, 1)),
+            strides=[1, 1, 1, 1],
+            padding="SAME",
+            data_format="NHWC",
+            dilations=[1, 1, 1, 1],
+        )
 
         # photometric loss
-        return self.photometric_loss(img_proj_bhw3, img_tgt_bhw3)
+        img_loss_bhw3 = self.photometric_loss(img_tgt_bhw3, img_proj_bhw3) * valid_mask_bhw1
+        img_loss = tf.math.divide_no_nan(tf.reduce_sum(img_loss_bhw3),
+                                         3 * tf.reduce_sum(valid_mask_bhw1))
 
-    def smooth_loss(self, disp_bhw1: tf.Tensor, img_bhw3: tf.Tensor):
+        return img_loss
+
+    def sym_warp_loss(self,
+        img_tgt_bhw3: tf.Tensor,
+        depth_tgt_bhw1: tf.Tensor,
+        img_src_bhw3: tf.Tensor,
+        depth_src_bhw1: tf.Tensor,
+        src_T_tgt_b: Pose3D,
+        tgt_T_src_b: Pose3D,
+        cam_b: PinholeCam,
+    ) -> tf.Tensor:
+        warp_loss = self.warp_loss(
+            img_tgt_bhw3,
+            depth_tgt_bhw1,
+            img_src_bhw3,
+            depth_src_bhw1,
+            src_T_tgt_b,
+            cam_b,
+        )
+        warp_loss_inv = self.warp_loss(
+            img_src_bhw3,
+            depth_src_bhw1,
+            img_tgt_bhw3,
+            depth_tgt_bhw1,
+            tgt_T_src_b,
+            cam_b,
+        )
+
+        return (warp_loss + warp_loss_inv) / 2.
+
+    def multi_sym_warp_loss(self,
+        img_tgt_bhw3: tf.Tensor,
+        depth_tgt_fullres_kbhw1: T.Sequence[tf.Tensor],
+        img_src_bhw3: tf.Tensor,
+        depth_src_fullres_kbhw1: T.Sequence[tf.Tensor],
+        src_T_tgt_b: Pose3D,
+        cam_b: PinholeCam,
+    ) -> tf.Tensor:
+        tgt_T_src_b = src_T_tgt_b.inv()
+
+        warp_loss = 0.
+        for depth_tgt_bhw1, depth_src_bhw1 in zip(depth_tgt_fullres_kbhw1, depth_src_fullres_kbhw1):
+            warp_loss += self.sym_warp_loss(
+                img_tgt_bhw3,
+                depth_tgt_bhw1,
+                img_src_bhw3,
+                depth_src_bhw1,
+                src_T_tgt_b,
+                tgt_T_src_b,
+                cam_b,
+            )
+
+        return warp_loss / float(len(depth_tgt_fullres_kbhw1))
+
+    def multi_smooth_loss(self,
+        depth_kbhw1: T.Sequence[tf.Tensor],
+        img_bhw3: tf.Tensor,
+    ) -> tf.Tensor:
+        smooth_loss = 0.
+        for scale, depth_bhw1 in enumerate(depth_kbhw1):
+            h = tf.shape(depth_bhw1)[1]
+            w = tf.shape(depth_bhw1)[2]
+            img_resized_bhw3 = tf.image.resize(img_bhw3, (h, w), antialias=True)
+            smooth_loss += self.smooth_loss(depth_bhw1, img_resized_bhw3) / (2 ** scale)
+
+        return smooth_loss / float(len(depth_kbhw1))
+
+    def smooth_loss(self, depth_bhw1: tf.Tensor, img_bhw3: tf.Tensor):
+        # inverse depth
+        disp_bhw1 = tf.math.divide_no_nan(1.0, depth_bhw1)
+
         # normalize
         mean_disp_b111 = tf.reduce_mean(disp_bhw1, axis=(1, 2), keepdims=True)
         norm_disp_bhw1 = tf.math.divide_no_nan(disp_bhw1, mean_disp_b111)
 
+        # inverse depth gradient
         grad_disp_x_bhw1 = tf.abs(norm_disp_bhw1[:, :, :-1, :] - norm_disp_bhw1[:, :, 1:, :])
         grad_disp_y_bhw1 = tf.abs(norm_disp_bhw1[:, :-1, :, :] - norm_disp_bhw1[:, 1:, :, :])
 
+        # image gradient (edge intensity)
         grad_img_x_bhw3 = tf.abs(img_bhw3[:, :, :-1, :] - img_bhw3[:, :, 1:, :])
         grad_img_y_bhw3 = tf.abs(img_bhw3[:, :-1, :, :] - img_bhw3[:, 1:, :, :])
 
+        # edge-aware weighting
         grad_disp_x_bhw1 *= tf.exp(-tf.reduce_mean(grad_img_x_bhw3, axis=-1, keepdims=True))
         grad_disp_y_bhw1 *= tf.exp(-tf.reduce_mean(grad_img_y_bhw3, axis=-1, keepdims=True))
 
+        # weighted smooth loss
         loss = tf.reduce_mean(grad_disp_x_bhw1) + tf.reduce_mean(grad_disp_y_bhw1)
 
-        return loss * self.p.weights.smooth
+        return loss

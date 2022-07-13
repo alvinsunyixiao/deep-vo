@@ -76,12 +76,12 @@ class PinholeCam:
         # jacobian
         fx = tf.broadcast_to(self.fx, shp)
         fy = tf.broadcast_to(self.fy, shp)
-        m00 = fx / points_3d[..., 2]
+        m00 = tf.math.divide_no_nan(fx, points_3d[..., 2])
         m01 = tf.zeros_like(m00)
-        m02 = -points_3d[..., 0] * fx / (points_3d[..., 2] ** 2)
+        m02 = tf.math.divide_no_nan(-points_3d[..., 0] * fx, (points_3d[..., 2] ** 2))
         m10 = tf.zeros_like(m00)
-        m11 = fy / points_3d[..., 2]
-        m12 = -points_3d[..., 1] * fy / (points_3d[..., 2] ** 2)
+        m11 = tf.math.divide_no_nan(fy, points_3d[..., 2])
+        m12 = tf.math.divide_no_nan(-points_3d[..., 1] * fy, (points_3d[..., 2] ** 2))
 
         m0 = tf.stack([m00, m01, m02], axis=-1)
         m1 = tf.stack([m10, m11, m12], axis=-1)

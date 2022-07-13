@@ -56,21 +56,6 @@ class StereoRecorder:
                     duration=0.02,
                 )
 
-    def _datum_from_airsim(self, res: airsim.ImageResponse, img_dir: str, prefix: str):
-        # get image data
-        img_path = os.path.join(img_dir, f"{prefix}_{res.time_stamp}.png")
-        with open(img_path, "wb") as f:
-            f.write(res.image_data_uint8)
-
-        # get pose data
-        world_T_body = airsim.Pose(res.camera_position, res.camera_orientation)
-
-        return {
-            "timestamp": res.time_stamp,
-            "img_path": img_path,
-            "world_T_body": world_T_body,
-        }
-
     def run(self) -> None:
         self.ctrl_thread.start()
         self.ctrl_thread.join()
