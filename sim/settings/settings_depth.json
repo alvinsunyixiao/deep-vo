@@ -1,0 +1,14 @@
+{
+    "SeeDocsAt": "https://github.com/Microsoft/AirSim/blob/master/docs/settings.md",
+    "SettingsVersion": 1.2,
+    "SimMode": "ComputerVision",
+    "TimeOfDay": {
+        "Enabled": true
+    },
+    "ViewMode": "NoDisplay",
+    "SubWindows": [
+        {"WindowID": 0, "ImageType": 0, "CameraName": "front_center"},
+        {"WindowID": 1, "ImageType": 3, "CameraName": "front_center"},
+        {"WindowID": 2, "ImageType": 0, "CameraName": "bottom_center"}
+    ]
+}
