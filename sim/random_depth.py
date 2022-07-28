@@ -53,7 +53,7 @@ if __name__ == "__main__":
     )
 
     writer = ShardedTFRecordWriter(output_dir, args.shard_size, args.shard_index_start)
-    with tqdm(total=args.num_samples) as pbar, writer:
+    with tqdm(total=args.num_samples, initial=args.shard_index_start * args.shard_size) as pbar, writer:
         while pbar.n < args.num_samples:
             # randomize weather if specified
             if args.randomize:
@@ -68,11 +68,12 @@ if __name__ == "__main__":
                 airsim.ImageRequest("front_center", airsim.ImageType.Scene),
                 airsim.ImageRequest("front_center", airsim.ImageType.DepthPlanar, True),
             ])
-            depth_data = [np.array(resp.image_data_float) for resp in responses[3:]]
-            occlusion_level = [np.sum(d < args.min_distance) / d.shape[0] for d in depth_data]
+            depth_data = np.array(responses[1].image_data_float)
+            occlusion_level = np.sum(depth_data < args.min_distance) / depth_data.shape[0]
+            sky_level = np.sum(depth_data > 65000) / depth_data.shape[0]
 
             # skip if any of the three images have an occlusion level greater than 5%
-            if any([o > 0.05 for o in occlusion_level]):
+            if occlusion_level > 0.1 or sky_level > .7:
                 continue
 
             # collect data
@@ -87,9 +88,8 @@ if __name__ == "__main__":
             datum["pose"] = airsim_to_pose3d(camera_pose).to_storage()
 
             # save depth
-            depth_mm = np.clip(np.asarray(responses[1].image_data_float) * 1e3, 0, 65535)
-            depth_mm = np.reshape(depth_mm, (responses[1].height, responses[1].width, 1))
-            datum["depth"] = tf.io.encode_png(depth_mm.astype(np.uint16))
+            depth_image = np.reshape(depth_data, (responses[1].height, responses[1].width, 1))
+            datum["depth"] = depth_image.astype(np.float32)
 
             # write to TFRecord
             for key in datum:
