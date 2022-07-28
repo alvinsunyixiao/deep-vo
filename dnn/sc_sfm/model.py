@@ -180,7 +180,7 @@ class PoseDecoder(tfk.layers.Layer):
 class SCSFM:
 
     DEFAULT_PARAMS=ParamDict(
-        img_size=(160, 256),
+        img_size=(160, 320),
     )
 
     def __init__(self, params=DEFAULT_PARAMS):
