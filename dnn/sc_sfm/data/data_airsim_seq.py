@@ -15,7 +15,7 @@ class DataAirsimSeq:
 
     DEFAULT_PARAMS = ParamDict(
         # root to data generated from sim/stereo_record.py
-        data_root = "/data/airsim/multirotor_highres",
+        data_root = "/home/alvin/data/airsim/multirotor_highres",
         # train portion
         train_split = 0.9,
         # camera intrinsics
@@ -26,7 +26,7 @@ class DataAirsimSeq:
         camera = PinholeCam(
             focal = np.array([184.75, 184.75]),
             center = np.array([320, 180]),
-        )
+        ),
         crop_size = (160, 320),
         # stereo camera extrinsic in EDN coordinate
         left_T_right = Pose3D(
@@ -35,7 +35,7 @@ class DataAirsimSeq:
         ),
         # parallel data pipeline
         num_parallel_calls=tf.data.AUTOTUNE,
-        batch_size = 8,
+        batch_size = 16,
     )
 
     def __init__(self, params: ParamDict=DEFAULT_PARAMS) -> None:
@@ -105,7 +105,7 @@ class DataAirsimSeq:
             # center crop box
             offset_h = (tf.shape(images)[1] - self.p.crop_size[0]) // 2
             offset_w = (tf.shape(images)[2] - self.p.crop_size[1]) // 2
-        images = tf.image.crop_to_bounding_box(images, offset_h, offset_w, self.p.crop_size[0], self.p.crop_size[1])
+        images = images[:, offset_h:offset_h + self.p.crop_size[0], offset_w:offset_w + self.p.crop_size[1]]
 
         if img_aug:
             images = self._augment_images(images)
