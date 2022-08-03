@@ -10,7 +10,7 @@ from utils.pose3d import Pose3D
 class DepthDataPipe:
 
     DEFAULT_PARAMS = ParamDict(
-        data_root = "/mnt/data/deep_depth",
+        data_root = "/home/alvin/data/tfrecords/deep_depth",
         batch_size = 32,
         prefetch_size = 4,
         shuffle_size = 512,
@@ -143,4 +143,4 @@ class DepthDataPipe:
 
     @tf.function
     def _process_val(self, example_proto) -> T.Dict[str, tf.Tensor]:
-        return self._parse_func(example_proto, False),
+        return self._parse_func(example_proto, False)
