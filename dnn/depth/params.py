@@ -7,5 +7,6 @@ PARAMS = ParamDict(
         num_epochs = 1000,
         save_freq = 10,
         img_log_freq = 2000,
+        weight_decay = 1e-4,
     ),
 )

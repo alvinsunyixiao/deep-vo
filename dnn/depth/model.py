@@ -13,12 +13,14 @@ class DepthDecoder(tfk.layers.Layer):
     def __init__(self,
         num_channels: T.Sequence[int] = [16, 32, 64, 128, 256],
         num_scales: int = 4,
+        weight_decay: T.Optional[float] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
 
         self.num_channels = num_channels
         self.num_scales = num_scales
+        self.weight_decay = weight_decay
 
         self.upsamples = []
         self.proj_convs = []
@@ -27,8 +29,8 @@ class DepthDecoder(tfk.layers.Layer):
         self.normal_layer = tfp.layers.IndependentNormal()
 
         for i, ch in enumerate(num_channels):
-            self.upsamples.append(Conv3x3Upsample(ch, name=f"upsample_{i}"))
-            self.proj_convs.append(Conv2DReflect(ch, 3, name=f"proj_conv_{i}"))
+            self.upsamples.append(Conv3x3Upsample(ch, weight_decay=weight_decay, name=f"upsample_{i}"))
+            self.proj_convs.append(Conv2DReflect(ch, 3, weight_decay=weight_decay, name=f"proj_conv_{i}"))
 
         for i in range(self.num_scales):
             self.depth_convs.append(tfk.layers.Conv2D(
@@ -43,6 +45,7 @@ class DepthDecoder(tfk.layers.Layer):
         config.update({
             "num_channels": self.num_channels,
             "num_scales": self.num_scales,
+            "weight_decay": self.weight_decay,
         })
         return config
 
@@ -67,14 +70,15 @@ class DepthDecoder(tfk.layers.Layer):
 
         return depths
 
-def get_model(img_size: T.Tuple[int, int]) -> tfk.Model:
+def get_model(img_size: T.Tuple[int, int], weight_decay: T.Optional[float] = None) -> tfk.Model:
     image = tfk.layers.Input(img_size + (3,), name="image")
 
-    feats = Resnet18Encoder(name="encoder")(image)
-    depth = DepthDecoder(name="decoder")(feats)
+    feats = Resnet18Encoder(weight_decay=weight_decay, name="encoder")(image)
+    depth = DepthDecoder(weight_decay=weight_decay, name="decoder")(feats)
 
     return tfk.Model(inputs=image, outputs=depth)
 
 if __name__ == "__main__":
-    model = get_model((160, 256))
+    model = get_model((160, 256), 1e-4)
     model.summary()
+    print(model.losses)

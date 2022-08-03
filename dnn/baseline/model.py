@@ -1,8 +1,10 @@
 import functools
 import numpy as np
 import tensorflow as tf
-import tensorflow.keras as tfk
 import typing as T
+import tensorflow.keras as tfk
+if T.TYPE_CHECKING:
+    from keras.api._v2 import keras as tfk
 
 from utils.params import ParamDict
 from utils.pose3d import Pose3D
@@ -15,6 +17,7 @@ class SameConvBnRelu(tfk.layers.Layer):
         strides: int,
         has_bn: bool = True,
         has_relu: bool = True,
+        weight_decay: T.Optional[float] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -23,15 +26,16 @@ class SameConvBnRelu(tfk.layers.Layer):
         self.strides = strides
         self.has_bn = has_bn
         self.has_relu = has_relu
+        self.weight_decay = weight_decay
 
+        reg = tfk.regularizers.l2(weight_decay)
         self.conv = tfk.layers.Conv2D(
             filters=filters,
             kernel_size=kernel_size,
             strides=strides,
             padding="same",
             kernel_initializer="he_normal",
-            #kernel_regularizer=tfk.regularizers.l2(1e-4),
-            #bias_regularizer=tfk.regularizers.l2(1e-4),
+            kernel_regularizer=tfk.regularizers.l2(weight_decay) if weight_decay else None,
             name="conv",
             use_bias=not has_bn,
         )
@@ -51,6 +55,7 @@ class SameConvBnRelu(tfk.layers.Layer):
             "strides": self.strides,
             "has_bn": self.has_bn,
             "has_relu": self.has_relu,
+            "weight_decay": self.weight_decay,
         })
         return config
 
@@ -68,6 +73,7 @@ class ResidualBlock(tfk.layers.Layer):
         filters: int,
         strided: bool = False,
         projection: bool = False,
+        weight_decay: T.Optional[float] = None,
         **kwargs
     ):
         super().__init__(**kwargs)
@@ -76,12 +82,14 @@ class ResidualBlock(tfk.layers.Layer):
         self.filters = filters
         self.strided = strided,
         self.projection = projection
+        self.weight_decay = weight_decay
 
         self.branch1 = SameConvBnRelu(
             filters=filters,
             kernel_size=1,
             strides=strides,
             has_relu=False,
+            weight_decay=weight_decay,
             name="branch1"
         ) if projection else None
 
@@ -89,6 +97,7 @@ class ResidualBlock(tfk.layers.Layer):
             filters=filters,
             kernel_size=3,
             strides=strides,
+            weight_decay=weight_decay,
             name="branch2a"
         )
 
@@ -97,6 +106,7 @@ class ResidualBlock(tfk.layers.Layer):
             kernel_size=3,
             strides=1,
             has_relu=False,
+            weight_decay=weight_decay,
             name="branch2b"
         )
 
@@ -108,6 +118,7 @@ class ResidualBlock(tfk.layers.Layer):
             "filters": self.filters,
             "strided": self.strided,
             "projection": self.projection,
+            "weight_decay": self.weight_decay,
         })
         return config
 
@@ -122,12 +133,14 @@ class ResidualGroup(tfk.layers.Layer):
         num_blocks: int,
         filters: int,
         strided: bool = True,
+        weight_decay: T.Optional[float] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.num_blocks = num_blocks
         self.filters = filters
         self.strided = strided
+        self.weight_decay = weight_decay
 
         self.blocks = []
         for block_idx in range(num_blocks):
@@ -137,6 +150,7 @@ class ResidualGroup(tfk.layers.Layer):
                 projection=(block_idx == 0),
                 # only do strided convolution on the first block of each group
                 strided=(strided and block_idx == 0),
+                weight_decay=weight_decay,
                 name="block_" + str(block_idx),
             ))
 
@@ -146,6 +160,7 @@ class ResidualGroup(tfk.layers.Layer):
             "num_blocks": self.num_blocks,
             "filters": self.filters,
             "strided": self.strided,
+            "weight_decay": self.weight_decay,
         })
         return config
 

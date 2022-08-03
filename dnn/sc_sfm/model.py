@@ -10,16 +10,24 @@ from utils.params import ParamDict
 from utils.pose3d import Pose3D
 
 class Resnet18Encoder(tfk.layers.Layer):
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, weight_decay: T.Optional[float] = None, **kwargs) -> None:
         super().__init__(**kwargs)
+        self.weight_decay = weight_decay
 
-        self.conv1 = SameConvBnRelu(64, 7, 2, name="conv1")
+        self.conv1 = SameConvBnRelu(64, 7, 2, weight_decay=weight_decay, name="conv1")
         self.pool1 = tfk.layers.MaxPool2D(3, 2, "same", name="pool1")
 
-        self.group1 = ResidualGroup(2, 64, False, name="group1")
-        self.group2 = ResidualGroup(2, 128, name="group2")
-        self.group3 = ResidualGroup(2, 256, name="group3")
-        self.group4 = ResidualGroup(2, 512, name="group4")
+        self.group1 = ResidualGroup(2, 64, False, weight_decay=weight_decay, name="group1")
+        self.group2 = ResidualGroup(2, 128, weight_decay=weight_decay, name="group2")
+        self.group3 = ResidualGroup(2, 256, weight_decay=weight_decay, name="group3")
+        self.group4 = ResidualGroup(2, 512, weight_decay=weight_decay, name="group4")
+
+    def get_config(self) -> T.Dict[str, T.Any]:
+        config = super().get_config()
+        config.update({
+            "weight_decay": self.weight_decay,
+        })
+        return config
 
     def call(self, x: tf.Tensor) -> T.List[tf.Tensor]:
         features = []
@@ -33,16 +41,24 @@ class Resnet18Encoder(tfk.layers.Layer):
         return features
 
 class Conv2DReflect(tfk.layers.Layer):
-    def __init__(self, filters: int, kernel_size: int, activation: str = "elu", **kwargs) -> None:
+    def __init__(self,
+        filters: int,
+        kernel_size: int,
+        activation: str = "elu",
+        weight_decay: T.Optional[float] = None,
+        **kwargs
+    ) -> None:
         super().__init__(**kwargs)
 
         self.filters = filters
         self.kernel_size = kernel_size
         self.activation = activation
+        self.weight_decay = weight_decay
 
         self.conv = tfk.layers.Conv2D(
             filters=filters,
             kernel_size=kernel_size,
+            kernel_regularizer=tfk.regularizers.l2(weight_decay) if weight_decay else None,
             padding="valid",
             activation=activation,
         )
@@ -53,6 +69,7 @@ class Conv2DReflect(tfk.layers.Layer):
             "filters": self.filters,
             "kernel_size": self.kernel_size,
             "activation": self.activation,
+            "weight_decay": self.weight_decay,
         })
         return config
 
@@ -63,16 +80,21 @@ class Conv2DReflect(tfk.layers.Layer):
         return x
 
 class Conv3x3Upsample(tfk.layers.Layer):
-    def __init__(self, filters: int, **kwargs) -> None:
+    def __init__(self, filters: int, weight_decay: T.Optional[float] = None, **kwargs) -> None:
         super().__init__(**kwargs)
 
         self.filters = filters
-        self.conv = Conv2DReflect(filters, 3, name="conv3x3")
+        self.weight_decay = weight_decay
+
+        self.conv = Conv2DReflect(filters, 3, weight_decay=weight_decay, name="conv3x3")
         self.upsample = tfk.layers.UpSampling2D(2, interpolation="nearest", name="upsample")
 
     def get_config(self) -> T.Dict[str, T.Any]:
         config = super().get_config()
-        config.update({"filters": self.filters})
+        config.update({
+            "filters": self.filters,
+            "weight_decay": self.weight_decay,
+        })
         return config
 
     def call(self, x):
