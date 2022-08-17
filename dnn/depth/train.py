@@ -37,6 +37,7 @@ class Trainer:
         self.val_writer = tf.summary.create_file_writer(
             os.path.join(self.log_dir, "validation"), name="validation")
         self.global_step = tf.Variable(0, dtype=tf.int64)
+        self.lr = tf.Variable(0, dtype=tf.float32)
         tf.summary.experimental.set_step(self.global_step)
 
     def _parse_args(self) -> argparse.Namespace:
@@ -116,8 +117,9 @@ class Trainer:
                          tf.clip_by_value(depth_dists[0].mean()[..., tf.newaxis], 0., 100.) / 100.)
 
     def train(self):
-        optimizer = tfk.optimizers.Adam(1e-4, clipnorm=1.)
+        optimizer = tfk.optimizers.Adam(self.lr, clipnorm=self.p.trainer.clipnorm)
         for i in range(self.p.trainer.num_epochs):
+            self.lr.assign(self.p.trainer.lr_schedule(i))
             # save model
             if i % self.p.trainer.save_freq == 0:
                 print(f"------ Saving Checkpoint for Epoch {i} ------")
@@ -125,6 +127,7 @@ class Trainer:
 
             print(f"------ Training Epoch {i} ------")
             with self.train_writer.as_default():
+                tf.summary.scalar("Learning Rate", self.lr)
                 for data in self.train_ds:
                     self.global_step.assign_add(1)
                     self._train_step(data, optimizer)
