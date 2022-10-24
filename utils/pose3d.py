@@ -89,7 +89,7 @@ class Pose3D:
         dtype: tf.DType = tf.float32
     ) -> None:
         tf.assert_equal(tf.shape(position)[-1], 3, "position must be size-3 vector(s)")
-        tf.assert_equal(orientation.shape, tf.shape(position)[:-1], "batch dimensions do not match")
+        tf.assert_equal(tf.shape(orientation.quat)[:-1], tf.shape(position)[:-1], "batch dimensions do not match")
         self.R = orientation
         self.t = tf.cast(position, dtype=dtype)
         self.dtype = dtype
