@@ -30,7 +30,7 @@ class DepthDecoder(tfk.layers.Layer):
 
         for i, ch in enumerate(num_channels):
             self.upsamples.append(Conv3x3Upsample(ch, weight_decay=weight_decay, name=f"upsample_{i}"))
-            self.proj_convs.append(Conv2DReflect(ch, 3, weight_decay=weight_decay, name=f"proj_conv_{i}"))
+            self.proj_convs.append(Conv2DReflect(ch, 3, activation=None, weight_decay=weight_decay, name=f"proj_conv_{i}"))
 
         for i in range(self.num_scales):
             self.depth_convs.append(tfk.layers.Conv2D(
@@ -53,12 +53,17 @@ class DepthDecoder(tfk.layers.Layer):
         x = features[-1]
 
         depths = []
+        depth_means = []
+        depth_scales = []
+        depth_feats = []
 
         for i in range(len(self.num_channels) - 1, -1, -1):
             x = self.upsamples[i](x)
             if i > 0:
                 x = tf.concat([x, features[i - 1]], axis=-1)
             x = self.proj_convs[i](x)
+            depth_feats.insert(0, x)
+            x = tf.nn.elu(x)
 
             if i < self.num_scales:
                 depth_params = self.depth_convs[i](x)
@@ -67,18 +72,29 @@ class DepthDecoder(tfk.layers.Layer):
                 depth_scale = tf.maximum(depth_scale, tfp.math.softplus_inverse(1e-3))
                 depth_params = tf.stack([depth_mean, depth_scale], axis=-1)
                 depths.insert(0, self.normal_layer(depth_params))
+                depth_means.insert(0, depth_mean)
+                depth_scales.insert(0, depth_scale)
 
-        return depths
+        return depths, depth_means, depth_scales, depth_feats
 
-def get_model(img_size: T.Tuple[int, int], weight_decay: T.Optional[float] = None) -> tfk.Model:
+def get_model(img_size: T.Tuple[int, int],
+              weight_decay: T.Optional[float] = None,
+              name: T.Optional[str] = None) -> tfk.Model:
     image = tfk.layers.Input(img_size + (3,), name="image")
 
     feats = Resnet18Encoder(weight_decay=weight_decay, name="encoder")(image)
-    depth = DepthDecoder(weight_decay=weight_decay, name="decoder")(feats)
+    depths, depth_means, depth_scales, depth_feats = DepthDecoder(weight_decay=weight_decay,
+                                                                  name="decoder")(feats)
 
-    return tfk.Model(inputs=image, outputs=depth)
+    outputs = {
+        "depths": depths,
+        "depth_means": depth_means,
+        "depth_scales": depth_scales,
+        "depth_feats": depth_feats,
+    }
+
+    return tfk.Model(inputs=image, outputs=outputs, name=name)
 
 if __name__ == "__main__":
     model = get_model((160, 256), 1e-4)
     model.summary()
-    print(model.losses)

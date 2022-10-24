@@ -17,6 +17,8 @@ class DepthDataPipe:
         cycle_length = 16,
         img_size = (160, 256),
         max_depth=300.,
+        num_parallel_reads=8,
+        num_parallel_calls=8,
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
@@ -25,8 +27,8 @@ class DepthDataPipe:
     def build_train_ds(self, dirname: str = "train") -> tf.data.Dataset:
         file_pattern = os.path.join(self.p.data_root, dirname, "*.tfrecord")
         files = tf.data.Dataset.list_files(file_pattern)
-        ds = tf.data.TFRecordDataset(files, num_parallel_reads=4)
-        ds = ds.map(self._process_train, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = tf.data.TFRecordDataset(files, num_parallel_reads=self.p.num_parallel_reads)
+        ds = ds.map(self._process_train, num_parallel_calls=self.p.num_parallel_calls)
         ds = ds.shuffle(self.p.shuffle_size)
         ds = ds.batch(self.p.batch_size, drop_remainder=True)
         ds = ds.prefetch(self.p.prefetch_size)
@@ -37,7 +39,7 @@ class DepthDataPipe:
         file_pattern = os.path.join(self.p.data_root, dirname, "*.tfrecord")
         files = tf.data.Dataset.list_files(file_pattern, shuffle=False)
         ds = tf.data.TFRecordDataset(files)
-        ds = ds.map(self._process_val, num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(self._process_val, num_parallel_calls=self.p.num_parallel_calls)
         ds = ds.batch(self.p.batch_size)
         ds = ds.prefetch(self.p.prefetch_size)
 
