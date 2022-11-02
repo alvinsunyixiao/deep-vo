@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
             data.append({
                 "image_png": responses[0].image_data_uint8,
-                "depth": responses[0].image_data_float,
+                "depth": responses[1].image_data_float,
                 "pose": pose.to_storage().numpy(),
             })
 
