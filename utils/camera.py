@@ -93,28 +93,37 @@ class PinholeCam:
     def project(self, points_3d: tf.Tensor) -> tf.Tensor:
         return self.project_with_jac(points_3d)[0]
 
+    def unit_depth_ray(self, uv: tf.Tensor) -> tf.Tensor:
+        uv_shp = tf.shape(uv)
+
+        return camera.perspective.ray(
+            point_2d=uv,
+            focal=tf.broadcast_to(self.focal, uv_shp),
+            principal_point=tf.broadcast_to(self.center, uv_shp),
+        )
+
+    def unit_ray(self, uv: tf.Tensor) -> tf.Tensor:
+        unit_depth_ray = self.unit_depth_ray(uv)
+        return tf.linalg.normalize(unit_depth_ray, axis=-1)[0]
+
     def unproject_with_jac(self,
         depth: tf.Tensor,
         grid: T.Optional[tf.Tensor] = None
     ) -> T.Tuple[tf.Tensor, tf.Tensor]:
-        shp = tf.shape(depth)[:-1]
-        shp2 = tf.concat([shp, [2]], axis=0)
-
         # generate grid assuming shp = (..., h, w)
         if grid is None:
+            shp = tf.shape(depth)[:-1]
+            shp2 = tf.concat([shp, [2]], axis=0)
+
             h = shp[-2]
             w = shp[-1]
             x_hw, y_hw = tf.meshgrid(tf.range(w, dtype=self.dtype),
                                      tf.range(h, dtype=self.dtype),
                                      indexing="xy")
             grid = tf.stack([x_hw, y_hw], axis=-1)
+            grid = tf.broadcast_to(grid, shp2)
 
-        points_3d_unit_depth = camera.perspective.unproject(
-            point_2d=tf.broadcast_to(grid, shp2),
-            depth=tf.ones_like(depth),
-            focal=tf.broadcast_to(self.focal, shp2),
-            principal_point=tf.broadcast_to(self.center, shp2),
-        )
+        points_3d_unit_depth = self.unit_depth_ray(grid)
 
         points_3d = points_3d_unit_depth * depth
         points_3d_D_depth = points_3d_unit_depth[..., tf.newaxis]
