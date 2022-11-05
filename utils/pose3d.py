@@ -9,35 +9,61 @@ import tensorflow as tf
 from tensorflow_graphics.geometry.transformation import \
     quaternion, axis_angle, rotation_matrix_3d, euler
 
-class Rot3D:
+class Rot3D(tf.experimental.BatchableExtensionType):
     """
     3D rotation represented with a quaternion [x, y, z, w]
     """
+    __name__ = "Rot3D"
+
+    quat: tf.Tensor
+
     def __init__(self,
-        quaternion: T.Union[tf.Tensor, np.ndarray],
-        dtype: tf.DType = tf.float32
+        quat: T.Union[tf.Tensor, np.ndarray],
+        dtype: T.Optional[tf.DType] = None,
+        renormalize: bool = False,
     ) -> None:
-        tf.assert_equal(tf.shape(quaternion)[-1], 4, "quaternion must be size-4 vector(s)")
-        self.quat = tf.cast(quaternion, dtype)
-        self.dtype = dtype
+        tf.assert_equal(tf.shape(quat)[-1], 4, "quaternion must be size-4 vector(s)")
 
-    def inv(self) -> Rot3D:
-        return Rot3D(quaternion.inverse(self.quat))
+        if not isinstance(quat, tf.Tensor):
+            dtype = dtype or tf.float32
+            quat = tf.convert_to_tensor(quat, dtype=dtype)
+        elif dtype is not None and quat.dtype != dtype:
+            quat = tf.cast(quat, dtype=dtype)
 
-    def __matmul__(self, other: T.Union[Rot3D, tf.Tensor]) -> T.Union[Rot3D, tf.Tensor]:
-        if isinstance(other, Rot3D):
-            return Rot3D(quaternion.multiply(self.quat, other.quat))
-        else:
-            return quaternion.rotate(other, self.quat)
+        if renormalize:
+            quat = tf.math.l2_normalize(quat, axis=-1)
+
+        self.quat = quat
 
     @property
     def shape(self) -> tf.TensorShape:
-        return self.quat.get_shape()[:-1]
+        return self.quat.shape[:-1]
 
-    def to_so3(self, eps: float = 1e-6) -> tf.Tensor:
+    @property
+    def dtype(self) -> tf.DType:
+        return self.quat.dtype
+
+    def __getitem__(self, key: tf.IndexedSlices) -> Rot3D:
+        return Rot3D(self.quat[key])
+
+    def __matmul__(self, other: T.Union[Rot3D, tf.Tensor]) -> T.Union[Rot3D, tf.Tensor]:
+        if isinstance(other, Rot3D):
+            return Rot3D(quaternion.multiply(self.quat, other.quat), renormalize=True)
+        else:
+            return quaternion.rotate(other, self.quat)
+
+    def __repr__(self) -> str:
+        quat = self.quat
+        if hasattr(self.quat, "numpy"):
+            quat = quat.numpy()
+        return f"Rot3D(quat={quat})"
+
+    def inv(self) -> Rot3D:
+        return Rot3D(quaternion.conjugate(self.quat))
+
+    def to_so3(self) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
-        w = a * theta
-        return tf.where(theta < eps, x=tf.zeros_like(w), y=w)
+        return a * theta
 
     def to_matrix(self) -> tf.Tensor:
         return rotation_matrix_3d.from_quaternion(self.quat)
@@ -48,85 +74,115 @@ class Rot3D:
     def flatten(self) -> Rot3D:
         return Rot3D(tf.reshape(self.quat, (-1, 4)))
 
-    def __repr__(self) -> str:
-        return f"Rot3D(quaternion={self.quat})"
-
-    def __getitem__(self, key) -> Rot3D:
-        return Rot3D(self.quat[key])
-
     def broadcast_to(self, shape: T.Union[T.Sequence[int], tf.TensorShape, tf.Tensor]) -> Rot3D:
         return Rot3D(tf.broadcast_to(self.quat, tf.concat([shape, [4]], axis=0)))
 
     @classmethod
-    def identity(cls, size: T.Tuple[int, ...] = ()) -> Rot3D:
-        return Rot3D(tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), size + (4,)))
+    def identity(cls, size: T.Tuple[int, ...] = (), dtype: tf.DType = tf.float32) -> Rot3D:
+        return Rot3D(tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0], dtype=dtype), size + (4,)))
 
     @classmethod
     def from_matrix(cls, rot_mat: tf.Tensor) -> Rot3D:
         return Rot3D(quaternion.from_rotation_matrix(rot_mat))
 
     @classmethod
-    def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray], eps: float = 1e-6) -> Rot3D:
+    def from_so3(cls, so3: T.Union[tf.Tensor, np.ndarray]) -> Rot3D:
         theta = tf.linalg.norm(so3, axis=-1, keepdims=True)
         axis = tf.math.divide_no_nan(so3, theta)
         q = quaternion.from_axis_angle(axis, theta)
-        q_eye = tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0]), tf.shape(q))
+        q_eye = tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0], dtype=so3.dtype), tf.shape(q))
+
+        dtype = so3.dtype
+        if isinstance(so3, tf.Tensor):
+            dtype = dtype.as_numpy_dtype
+        eps = np.finfo(dtype).eps
 
         return Rot3D(tf.where(theta < eps, x=q_eye, y=q))
 
     @classmethod
-    def random(cls, max_angle: T.Union[float, tf.Tensor], size: T.Tuple[int, ...] = ()) -> Rot3D:
-        a = tf.random.normal(size + (3,))
+    def random(cls,
+        max_angle: T.Union[float, tf.Tensor] = np.pi,
+        size: T.Tuple[int, ...] = (),
+        dtype: tf.DType = tf.float32,
+    ) -> Rot3D:
+        a = tf.random.normal(size + (3,), dtype=dtype)
         a = a / tf.linalg.norm(a, axis=-1, keepdims=True)
-        theta = tf.random.uniform(size + (1,), -max_angle, max_angle)
-        return Rot3D(quaternion.from_axis_angle(a, theta))
+        theta = tf.random.uniform(size + (1,), -max_angle, max_angle, dtype=dtype)
+        return Rot3D(quaternion.from_axis_angle(a, theta), dtype=dtype)
 
+class Pose3D(tf.experimental.BatchableExtensionType):
+    __name__ = "Pose3D"
 
-class Pose3D:
+    R: Rot3D
+    t: tf.Tensor
+
     def __init__(self,
-        orientation: Rot3D,
-        position: T.Union[tf.Tensor, np.ndarray],
-        dtype: tf.DType = tf.float32
+        R: Rot3D,
+        t: T.Union[tf.Tensor, np.ndarray],
+        dtype: T.Optional[tf.DType] = None,
     ) -> None:
-        tf.assert_equal(tf.shape(position)[-1], 3, "position must be size-3 vector(s)")
-        tf.assert_equal(orientation.shape, tf.shape(position)[:-1], "batch dimensions do not match")
-        self.R = orientation
-        self.t = tf.cast(position, dtype=dtype)
-        self.dtype = dtype
+        tf.assert_equal(tf.shape(t)[-1], 3, "t must be size-3 vector(s)")
+        tf.assert_equal(R.shape, tf.shape(t)[:-1], "batch dimensions do not match")
+        self.R = R
+        self.t = t
 
-    def inv(self) -> Pose3D:
-        R_inv = self.R.inv()
-        return Pose3D(
-            position=R_inv @ (-self.t),
-            orientation=R_inv,
-        )
+        if dtype is None:
+            dtype = R.dtype
+        elif dtype != R.dtype:
+            self.R = Rot3D(R.quat, dtype)
+
+        if not isinstance(t, tf.Tensor):
+            self.t = tf.convert_to_tensor(t, dtype=dtype)
+        elif t.dtype != dtype:
+            self.t = tf.cast(t, dtype)
+
+    @property
+    def dtype(self) -> tf.DType:
+        return self.R.dtype
 
     @property
     def shape(self) -> tf.TensorShape:
         return self.R.shape
 
-    def flatten(self) -> Pose3D:
-        return Pose3D(
-            orientation=self.R.flatten(),
-            position=tf.reshape(self.t, (-1, 3)),
-        )
+    def __getitem__(self, key: tf.IndexedSlices) -> Pose3D:
+        return Pose3D(self.R[key], self.t[key])
 
     def __matmul__(self, other: T.Union[Pose3D, tf.Tensor]) -> T.Union[Pose3D, tf.Tensor]:
         if isinstance(other, Pose3D):
             return Pose3D(
-                position=self.R @ other.t + self.t,
-                orientation=self.R @ other.R,
+                t=self.R @ other.t + self.t,
+                R=self.R @ other.R,
             )
         else:
             tf.assert_equal(tf.shape(other)[-1], 3, "Pose3D can only be applied to 3D vectors")
             tf.assert_equal(tf.shape(other)[:-1], self.shape, "batch dimensions do not match")
             return self.R @ other + self.t
 
-    def to_se3(self, eps: float = 1e-6, pseudo: bool = True) -> tf.Tensor:
-        w = self.R.to_so3(eps)
+    def __repr__(self) -> str:
+        t = self.t
+        if hasattr(t, "numpy"):
+            t = t.numpy()
+        return f"Pose3D(R={self.R}, t={t})"
+
+    def inv(self) -> Pose3D:
+        R_inv = self.R.inv()
+        return Pose3D(
+            t=R_inv @ (-self.t),
+            R=R_inv,
+        )
+
+    def flatten(self) -> Pose3D:
+        return Pose3D(
+            R=self.R.flatten(),
+            t=tf.reshape(self.t, (-1, 3)),
+        )
+
+    def to_se3(self, pseudo: bool = True) -> tf.Tensor:
+        w = self.R.to_so3()
         if pseudo:
             return tf.concat([w, self.t], axis=-1)
 
+        eps = np.finfo(self.dtype.as_numpy_dtype).eps
         theta = tf.linalg.norm(w, axis=-1, keepdims=True)
         t = self.t
         wt = tf.linalg.cross(w, t)
@@ -143,45 +199,28 @@ class Pose3D:
     def to_storage(self) -> tf.Tensor:
         return tf.concat([self.R.quat, self.t], axis=-1)
 
-    def __repr__(self) -> str:
-        return f"Pose3D(position={self.t}, orientation={self.R})"
-
-    def __getitem__(self, key) -> Pose3D:
-        return Pose3D(self.R[key], self.t[key])
-
     def broadcast_to(self, shape: T.Union[T.Sequence[int], tf.TensorShape, tf.Tensor]) -> Pose3D:
         return Pose3D(self.R.broadcast_to(shape),
                       tf.broadcast_to(self.t, tf.concat([shape, [3]], axis=0)))
 
     @classmethod
-    def stack(cls, poses: T.Iterable[Pose3D]) -> Pose3D:
-        ts = [pose.t for pose in poses]
-        quads = [poses.R.quad for pose in poses]
-
-        return Pose3D(
-            orientation = Rot3D(tf.stack(quads)),
-            position=tf.stack(ts),
-        )
-
-    @classmethod
     def identity(cls, size: T.Tuple[int, ...] = ()) -> Pose3D:
         return Pose3D(
-            orientation=Rot3D.identity(size),
-            position=tf.zeros(size + (3,)),
+            R=Rot3D.identity(size),
+            t=tf.zeros(size + (3,)),
         )
 
     @classmethod
     def from_storage(cls, storage: T.Union[tf.Tensor, np.ndarray]) -> Pose3D:
         tf.assert_equal(tf.shape(storage)[-1], 7), "Pose3D storage are size-7 vectors"
         return Pose3D(
-            orientation=Rot3D(storage[..., :4]),
-            position=storage[..., 4:],
+            R=Rot3D(storage[..., :4]),
+            t=storage[..., 4:],
         )
 
     @classmethod
     def from_se3(cls,
                  se3: T.Union[tf.Tensor, np.ndarray],
-                 eps: float = 1e-6,
                  pseudo: bool = True) -> Pose3D:
         tf.assert_equal(tf.shape(se3)[-1], 6, "se3 vectors must be size-6")
         w = se3[..., :3]
@@ -190,9 +229,14 @@ class Pose3D:
 
         if pseudo:
             return Pose3D(
-                position=t,
-                orientation=Rot3D.from_so3(w, eps)
+                t=t,
+                R=Rot3D.from_so3(w)
             )
+
+        dtype = se3.dtype
+        if isinstance(se3, tf.Tensor):
+            dtype = dtype.as_numpy_dtype
+        eps = np.finfo(dtype).eps
 
         wt = tf.linalg.cross(w, t)
         wwt = tf.linalg.cross(w, wt)
@@ -201,8 +245,8 @@ class Pose3D:
         t_safe = tf.where(theta < eps, x=t, y=tp)
 
         return Pose3D(
-            position=t_safe,
-            orientation=Rot3D.from_so3(w, eps),
+            t=t_safe,
+            R=Rot3D.from_so3(w),
         )
 
     @classmethod
@@ -231,6 +275,7 @@ class RandomPose3DGen:
         rpy = self.rpy_gen()
 
         return Pose3D(
-            position=pos,
-            orientation=Rot3D(quaternion.from_euler(rpy)),
+            t=pos,
+            R=Rot3D(quaternion.from_euler(rpy)),
         )
+
