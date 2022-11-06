@@ -122,7 +122,7 @@ class Pose3D(tf.experimental.BatchableExtensionType):
         dtype: T.Optional[tf.DType] = None,
     ) -> None:
         tf.assert_equal(tf.shape(t)[-1], 3, "t must be size-3 vector(s)")
-        tf.assert_equal(R.shape, tf.shape(t)[:-1], "batch dimensions do not match")
+        tf.assert_equal(tf.shape(R.quat)[:-1], tf.shape(t)[:-1], "batch dimensions do not match")
         self.R = R
         self.t = t
 
@@ -155,7 +155,8 @@ class Pose3D(tf.experimental.BatchableExtensionType):
             )
         else:
             tf.assert_equal(tf.shape(other)[-1], 3, "Pose3D can only be applied to 3D vectors")
-            tf.assert_equal(tf.shape(other)[:-1], self.shape, "batch dimensions do not match")
+            tf.assert_equal(tf.shape(other)[:-1], tf.shape(self.t)[:-1],
+                            "batch dimensions do not match")
             return self.R @ other + self.t
 
     def __repr__(self) -> str:
@@ -176,6 +177,18 @@ class Pose3D(tf.experimental.BatchableExtensionType):
             R=self.R.flatten(),
             t=tf.reshape(self.t, (-1, 3)),
         )
+
+    def to_matrix(self) -> tf.Tensor:
+        batch_shp = tf.shape(self.t)[:-1]
+        R_b33 = self.R.to_matrix()
+        t_b31 = self.t[..., tf.newaxis]
+        top_b34 = tf.concat([R_b33, t_b31], axis=-1)
+
+        bottom_4 = tf.constant([0, 0, 0, 1], dtype=self.dtype)
+        bottom_b4 = tf.broadcast_to(bottom_4, tf.concat([batch_shp, [4]], axis=0))
+        bottom_b14 = bottom_b4[..., tf.newaxis, :]
+
+        return tf.concat([top_b34, bottom_b14], axis=-2)
 
     def to_se3(self, pseudo: bool = True) -> tf.Tensor:
         w = self.R.to_so3()
@@ -204,10 +217,18 @@ class Pose3D(tf.experimental.BatchableExtensionType):
                       tf.broadcast_to(self.t, tf.concat([shape, [3]], axis=0)))
 
     @classmethod
-    def identity(cls, size: T.Tuple[int, ...] = ()) -> Pose3D:
+    def identity(cls, size: T.Tuple[int, ...] = (), dtype: tf.DType = tf.float32) -> Pose3D:
         return Pose3D(
-            R=Rot3D.identity(size),
-            t=tf.zeros(size + (3,)),
+            R=Rot3D.identity(size, dtype=dtype),
+            t=tf.zeros(size + (3,), dtype=dtype),
+            dtype=dtype,
+        )
+
+    @classmethod
+    def from_matrix(cls, pose_mat: tf.Tensor) -> Pose3D:
+        return Pose3D(
+            R=Rot3D.from_matrix(pose_mat[..., :3, :3]),
+            t=pose_mat[..., :3, 3],
         )
 
     @classmethod
@@ -250,10 +271,15 @@ class Pose3D(tf.experimental.BatchableExtensionType):
         )
 
     @classmethod
-    def random(cls, max_angle: float, max_translate: float, size: T.Tuple[int, ...] = ()) -> Pose3D:
-        t = tf.random.uniform(size + (3,), -max_translate, max_translate)
+    def random(cls,
+        max_angle: float = np.pi,
+        max_translate: float = 0.,
+        size: T.Tuple[int, ...] = (),
+        dtype: tf.DType = tf.float32,
+    ) -> Pose3D:
+        t = tf.random.uniform(size + (3,), -max_translate, max_translate, dtype=dtype)
 
-        return Pose3D(Rot3D.random(max_angle, size), t)
+        return Pose3D(Rot3D.random(max_angle, size, dtype), t, dtype=dtype)
 
 class RandomPose3DGen:
     def __init__(self,
