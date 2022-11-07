@@ -28,6 +28,14 @@ def convert_to_numpy(tensor: T.Union[tf.Tensor, np.ndarray]) -> np.ndarray:
         tensor = tensor.numpy()
     return tensor
 
+def cast_if_needed(tensor: T.Union[tf.Tensor, np.ndarray], dtype: tf.DType) -> tf.Tensor:
+    if isinstance(tensor, np.ndarray):
+        return tf.convert_to_tensor(tensor, dtype=dtype)
+    elif tensor.dtype != dtype:
+        return tf.cast(tensor, dtype=dtype)
+    else:
+        return tensor
+
 class ShardedTFRecordWriter:
     def __init__(self, output_dir: str, shard_size: int, start_index: int = 0):
         self.output_dir = output_dir

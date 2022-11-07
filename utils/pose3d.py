@@ -9,6 +9,8 @@ import tensorflow as tf
 from tensorflow_graphics.geometry.transformation import \
     quaternion, axis_angle, rotation_matrix_3d, euler
 
+from utils.tf_utils import cast_if_needed
+
 class Rot3D(tf.experimental.BatchableExtensionType):
     """
     3D rotation represented with a quaternion [x, y, z, w]
@@ -24,11 +26,12 @@ class Rot3D(tf.experimental.BatchableExtensionType):
     ) -> None:
         tf.assert_equal(tf.shape(quat)[-1], 4, "quaternion must be size-4 vector(s)")
 
-        if not isinstance(quat, tf.Tensor):
+        if isinstance(quat, np.ndarray):
             dtype = dtype or tf.float32
-            quat = tf.convert_to_tensor(quat, dtype=dtype)
-        elif dtype is not None and quat.dtype != dtype:
-            quat = tf.cast(quat, dtype=dtype)
+        else:
+            dtype = dtype or quat.dtype
+
+        quat = cast_if_needed(quat, dtype=dtype)
 
         if renormalize:
             quat = tf.math.l2_normalize(quat, axis=-1)
@@ -123,18 +126,14 @@ class Pose3D(tf.experimental.BatchableExtensionType):
     ) -> None:
         tf.assert_equal(tf.shape(t)[-1], 3, "t must be size-3 vector(s)")
         tf.assert_equal(tf.shape(R.quat)[:-1], tf.shape(t)[:-1], "batch dimensions do not match")
-        self.R = R
-        self.t = t
 
+        self.R = R
         if dtype is None:
             dtype = R.dtype
         elif dtype != R.dtype:
             self.R = Rot3D(R.quat, dtype)
 
-        if not isinstance(t, tf.Tensor):
-            self.t = tf.convert_to_tensor(t, dtype=dtype)
-        elif t.dtype != dtype:
-            self.t = tf.cast(t, dtype)
+        self.t = cast_if_needed(t, dtype=dtype)
 
     @property
     def dtype(self) -> tf.DType:

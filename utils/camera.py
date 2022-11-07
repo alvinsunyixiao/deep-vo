@@ -7,24 +7,45 @@ import tensorflow as tf
 from tensorflow_graphics.rendering import camera
 
 from utils.pose3d import Pose3D
+from utils.tf_utils import cast_if_needed
 
-class PinholeCam:
+class PinholeCam(tf.experimental.BatchableExtensionType):
     def __init__(self,
         focal: T.Union[tf.Tensor, np.ndarray],
         center: T.Union[tf.Tensor, np.ndarray],
-        dtype: tf.DType = tf.float32,
+        skew: T.Optional[T.Union[tf.Tensor, np.ndarray]] = None,
+        dtype: T.Optional[tf.DType] = None,
     ):
         tf.assert_equal(tf.shape(focal)[-1], 2, "focal must be size-4 vector(s)")
         tf.assert_equal(tf.shape(center)[-1], 2, "center must be size-4 vector(s)")
+        if skew is not None:
+            tf.assert_equal(tf.shape(skew)[-1], 1, "skew must be size-1 vector(s)")
         tf.assert_equal(tf.shape(focal), tf.shape(center),
                 "center and focal must be the same size")
-        self.focal = tf.cast(focal, dtype)
-        self.center = tf.cast(center, dtype)
-        self.dtype = dtype
+
+        if skew is None:
+            skew = tf.zeros(tf.shape(focal)[:-1], dtype=dtype)[..., tf.newaxis]
+
+        if isinstance(focal, tf.Tensor):
+            dtype = dtype or focal.dtype
+        elif isinstance(center, tf.Tensor):
+            dtype = dtype or center.dtype
+        elif isinstance(skew, tf.Tensor):
+            dtype = dtype or skew.dtype
+        else:
+            dtype = dtype or tf.float32
+
+        self.focal = cast_if_needed(focal, dtype)
+        self.center = cast_if_needed(center, dtype)
+        self.skew = cast_if_needed(skew, dtype)
+
+    @property
+    def dtype(self) -> tf.DType:
+        return self.focal.dtype
 
     @property
     def shape(self) -> tf.TensorShape:
-        return self.focal.get_shape()[:-1]
+        return self.focal.shape[:-1]
 
     @property
     def fx(self) -> tf.Tensor:
@@ -42,25 +63,41 @@ class PinholeCam:
     def cy(self) -> tf.Tensor:
         return self.center[..., 1]
 
+    @property
+    def skew(self) -> tf.Tensor:
+        return self.skew[..., 0]
+
     def to_matrix(self) -> tf.Tensor:
-        return camera.perspective.matrix_from_intrinsics(self.focal, self.center)
+        return camera.perspective.matrix_from_intrinsics(self.focal, self.center, self.skew)
 
     def to_storage(self) -> tf.Tensor:
-        return tf.concat([self.focal, self.center], axis=-1)
+        return tf.concat([self.focal, self.center, self.skew], axis=-1)
 
     @classmethod
     def from_storage(cls, data: tf.Tensor) -> PinholeCam:
         tf.assert_equal(tf.shape(data)[-1], 4, "PinholeCam has a storage dimension of 4")
         return cls(
             focal=data[..., :2],
-            center=data[..., 2:],
+            center=data[..., 2:4],
+            skew=data[..., 4, tf.newaxis],
         )
 
     def __repr__(self) -> str:
-        return f"PinholeCam(focal={self.focal}, center={self.center})"
+        focal = self.focal
+        center = self.center
+        skew = self.skew
+
+        if hasattr(focal, "numpy"):
+            focal = focal.numpy()
+        if hasattr(center, "numpy"):
+            center = center.numpy()
+        if hasattr(skew, "numpy"):
+            skew = skew.numpy()
+
+        return f"PinholeCam(focal={focal}, center={center}, skew={skew})"
 
     def __getitem__(self, key) -> PinholeCam:
-        return PinholeCam(self.focal[key], self.center[key])
+        return PinholeCam(self.focal[key], self.center[key], self.skew[key])
 
     def project_with_jac(self, points_3d: tf.Tensor) -> T.Tuple[tf.Tensor, tf.Tensor]:
         shp = tf.shape(points_3d)[:-1]
