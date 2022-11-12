@@ -22,14 +22,18 @@ def Rot3D_stack(values: T.List[Rot3D], axis=0) -> Rot3D:
     assert len(values) > 0, "Attempting to stack empty array"
     axis = axis if axis >= 0 else axis - 1
     quats = tf.stack([R.quat for R in values], axis=axis)
-    return Rot3D(quats, dtype=quats.dtype)
+    return Rot3D(quats, renormalize=False)
 
 @tf.experimental.dispatch_for_api(tf.concat)
 def Rot3D_concat(values: T.List[Rot3D], axis) -> Rot3D:
     assert len(values) > 0, "Attempting to concat empty array"
     axis = axis if axis >= 0 else axis - 1
     quats = tf.concat([R.quat for R in values], axis=axis)
-    return Rot3D(quats, dtype=quats.dtype)
+    return Rot3D(quats, renormalize=False)
+
+@tf.experimental.dispatch_for_api(tf.gather)
+def Rot3D_gather(params: Rot3D, indices, validate_indices=None, axis=None, batch_dims=0) -> Rot3D:
+    return Rot3D(tf.gather(params.quat, indices), renormalize=False)
 
 
 ################### API Dispatch for Pose3D ###################
@@ -54,7 +58,7 @@ def Pose3D_stack(values: T.List[Pose3D], axis=0) -> Pose3D:
     ts = tf.stack([pose.t for pose in values], axis=axis)
     quats = tf.stack([pose.R.quat for pose in values], axis=axis)
 
-    return Pose3D(R=Rot3D(quats, quats.dtype), t=ts, dtype=quats.dtype)
+    return Pose3D(R=Rot3D(quats, renormalize=False), t=ts)
 
 @tf.experimental.dispatch_for_api(tf.concat)
 def Pose3D_concat(values: T.List[Pose3D], axis=0) -> Pose3D:
@@ -64,4 +68,11 @@ def Pose3D_concat(values: T.List[Pose3D], axis=0) -> Pose3D:
     ts = tf.concat([pose.t for pose in values], axis=axis)
     quats = tf.concat([pose.R.quat for pose in values], axis=axis)
 
-    return Pose3D(R=Rot3D(quats, quats.dtype), t=ts, dtype=quats.dtype)
+    return Pose3D(R=Rot3D(quats, renormalize=False), t=ts)
+
+@tf.experimental.dispatch_for_api(tf.gather)
+def Pose3D_gather(params: Pose3D, indices, validate_indices=None, axis=None, batch_dims=0) -> Pose3D:
+    return Pose3D(
+        R = Rot3D(tf.gather(params.R.quat, indices), renormalize=False),
+        t = tf.gather(params.t, indices),
+    )

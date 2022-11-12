@@ -98,6 +98,7 @@ class Rot3DTestCase(TestCaseBase):
         self.assertEqual(R_stack.shape, (self.default_size[0], self.default_size[1] * NUM_DUP))
         self.assertEqual(R_stack.quat.shape, (self.default_size[0], self.default_size[1] * NUM_DUP, 4))
 
+    # TODO(alvin): test_gather
 
 class Pose3DTestCast(TestCaseBase):
     def setUp(self):
@@ -210,6 +211,8 @@ class Pose3DTestCast(TestCaseBase):
         self.assertEqual(T_stack.shape, (self.default_size[0], self.default_size[1] * NUM_DUP))
         self.assertEqual(T_stack.R.quat.shape, (self.default_size[0], self.default_size[1] * NUM_DUP, 4))
         self.assertEqual(T_stack.t.shape, (self.default_size[0], self.default_size[1] * NUM_DUP, 3))
+
+    # TODO(alvin): test_gather
 
 if __name__ == "__main__":
     unittest.main()

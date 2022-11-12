@@ -10,34 +10,30 @@ from utils.pose3d import Pose3D
 from utils.tf_utils import cast_if_needed
 
 class PinholeCam(tf.experimental.BatchableExtensionType):
+    __name__ = "PinholeCam"
+
+    focal: tf.Tensor
+    center: tf.Tensor
+
     def __init__(self,
         focal: T.Union[tf.Tensor, np.ndarray],
         center: T.Union[tf.Tensor, np.ndarray],
-        skew: T.Optional[T.Union[tf.Tensor, np.ndarray]] = None,
         dtype: T.Optional[tf.DType] = None,
     ):
         tf.assert_equal(tf.shape(focal)[-1], 2, "focal must be size-4 vector(s)")
         tf.assert_equal(tf.shape(center)[-1], 2, "center must be size-4 vector(s)")
-        if skew is not None:
-            tf.assert_equal(tf.shape(skew)[-1], 1, "skew must be size-1 vector(s)")
         tf.assert_equal(tf.shape(focal), tf.shape(center),
                 "center and focal must be the same size")
-
-        if skew is None:
-            skew = tf.zeros(tf.shape(focal)[:-1], dtype=dtype)[..., tf.newaxis]
 
         if isinstance(focal, tf.Tensor):
             dtype = dtype or focal.dtype
         elif isinstance(center, tf.Tensor):
             dtype = dtype or center.dtype
-        elif isinstance(skew, tf.Tensor):
-            dtype = dtype or skew.dtype
         else:
             dtype = dtype or tf.float32
 
         self.focal = cast_if_needed(focal, dtype)
         self.center = cast_if_needed(center, dtype)
-        self.skew = cast_if_needed(skew, dtype)
 
     @property
     def dtype(self) -> tf.DType:
@@ -63,15 +59,11 @@ class PinholeCam(tf.experimental.BatchableExtensionType):
     def cy(self) -> tf.Tensor:
         return self.center[..., 1]
 
-    @property
-    def skew(self) -> tf.Tensor:
-        return self.skew[..., 0]
-
     def to_matrix(self) -> tf.Tensor:
-        return camera.perspective.matrix_from_intrinsics(self.focal, self.center, self.skew)
+        return camera.perspective.matrix_from_intrinsics(self.focal, self.center)
 
     def to_storage(self) -> tf.Tensor:
-        return tf.concat([self.focal, self.center, self.skew], axis=-1)
+        return tf.concat([self.focal, self.center], axis=-1)
 
     @classmethod
     def from_storage(cls, data: tf.Tensor) -> PinholeCam:
@@ -79,25 +71,21 @@ class PinholeCam(tf.experimental.BatchableExtensionType):
         return cls(
             focal=data[..., :2],
             center=data[..., 2:4],
-            skew=data[..., 4, tf.newaxis],
         )
 
     def __repr__(self) -> str:
         focal = self.focal
         center = self.center
-        skew = self.skew
 
         if hasattr(focal, "numpy"):
             focal = focal.numpy()
         if hasattr(center, "numpy"):
             center = center.numpy()
-        if hasattr(skew, "numpy"):
-            skew = skew.numpy()
 
-        return f"PinholeCam(focal={focal}, center={center}, skew={skew})"
+        return f"PinholeCam(focal={focal}, center={center})"
 
     def __getitem__(self, key) -> PinholeCam:
-        return PinholeCam(self.focal[key], self.center[key], self.skew[key])
+        return PinholeCam(self.focal[key], self.center[key])
 
     def project_with_jac(self, points_3d: tf.Tensor) -> T.Tuple[tf.Tensor, tf.Tensor]:
         shp = tf.shape(points_3d)[:-1]
@@ -147,18 +135,9 @@ class PinholeCam(tf.experimental.BatchableExtensionType):
         depth: tf.Tensor,
         grid: T.Optional[tf.Tensor] = None
     ) -> T.Tuple[tf.Tensor, tf.Tensor]:
-        # generate grid assuming shp = (..., h, w)
+        # generate grid assuming depth has shape = (..., h, w, 1)
         if grid is None:
-            shp = tf.shape(depth)[:-1]
-            shp2 = tf.concat([shp, [2]], axis=0)
-
-            h = shp[-2]
-            w = shp[-1]
-            x_hw, y_hw = tf.meshgrid(tf.range(w, dtype=self.dtype),
-                                     tf.range(h, dtype=self.dtype),
-                                     indexing="xy")
-            grid = tf.stack([x_hw, y_hw], axis=-1)
-            grid = tf.broadcast_to(grid, shp2)
+            grid = self.compute_grid(depth)
 
         points_3d_unit_depth = self.unit_depth_ray(grid)
 
@@ -209,10 +188,25 @@ class PinholeCam(tf.experimental.BatchableExtensionType):
         pixel_src, pz_src, _, _ = self.reproject_with_jac(depth_tgt, src_T_tgt, pixel_tgt)
         return pixel_src, pz_src
 
+    def compute_grid(self, depth: tf.Tensor) -> tf.Tensor:
+        shp = tf.shape(depth)[:-1]
+        shp2 = tf.concat([shp, [2]], axis=0)
+
+        h = shp[-2]
+        w = shp[-1]
+        x_hw, y_hw = tf.meshgrid(tf.range(w, dtype=self.dtype),
+                                 tf.range(h, dtype=self.dtype),
+                                 indexing="xy")
+        grid = tf.stack([x_hw, y_hw], axis=-1)
+        grid = tf.broadcast_to(grid, shp2)
+
+        return grid
+
     @classmethod
     def from_size_and_fov(cls,
         size_xy: T.Union[tf.Tensor, np.ndarray],
         fov_xy: T.Union[tf.Tensor, np.ndarray],
+        dtype: tf.DType = tf.float32,
         use_degree: bool = True,
     ) -> PinholeCam:
         if use_degree:
@@ -221,4 +215,5 @@ class PinholeCam(tf.experimental.BatchableExtensionType):
         center = size_xy / 2.
         focal = center / tf.math.tan(fov_xy / 2)
 
-        return PinholeCam(focal, center)
+        return PinholeCam(focal, center, dtype=dtype)
+

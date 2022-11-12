@@ -22,7 +22,7 @@ class Rot3D(tf.experimental.BatchableExtensionType):
     def __init__(self,
         quat: T.Union[tf.Tensor, np.ndarray],
         dtype: T.Optional[tf.DType] = None,
-        renormalize: bool = False,
+        renormalize: bool = True,
     ) -> None:
         tf.assert_equal(tf.shape(quat)[-1], 4, "quaternion must be size-4 vector(s)")
 
@@ -34,7 +34,7 @@ class Rot3D(tf.experimental.BatchableExtensionType):
         quat = cast_if_needed(quat, dtype=dtype)
 
         if renormalize:
-            quat = tf.math.l2_normalize(quat, axis=-1)
+            quat = quat / tf.stop_gradient(tf.linalg.norm(quat, axis=-1, keepdims=True))
 
         self.quat = quat
 
@@ -47,11 +47,11 @@ class Rot3D(tf.experimental.BatchableExtensionType):
         return self.quat.dtype
 
     def __getitem__(self, key: tf.IndexedSlices) -> Rot3D:
-        return Rot3D(self.quat[key])
+        return Rot3D(self.quat[key], renormalize=False)
 
     def __matmul__(self, other: T.Union[Rot3D, tf.Tensor]) -> T.Union[Rot3D, tf.Tensor]:
         if isinstance(other, Rot3D):
-            return Rot3D(quaternion.multiply(self.quat, other.quat), renormalize=True)
+            return Rot3D(quaternion.multiply(self.quat, other.quat))
         else:
             return quaternion.rotate(other, self.quat)
 
@@ -62,7 +62,7 @@ class Rot3D(tf.experimental.BatchableExtensionType):
         return f"Rot3D(quat={quat})"
 
     def inv(self) -> Rot3D:
-        return Rot3D(quaternion.conjugate(self.quat))
+        return Rot3D(quaternion.conjugate(self.quat), renormalize=False)
 
     def to_so3(self) -> tf.Tensor:
         a, theta = axis_angle.from_quaternion(self.quat)
@@ -75,14 +75,17 @@ class Rot3D(tf.experimental.BatchableExtensionType):
         return euler.from_quaternion(self.quat)
 
     def flatten(self) -> Rot3D:
-        return Rot3D(tf.reshape(self.quat, (-1, 4)))
+        return Rot3D(tf.reshape(self.quat, (-1, 4)), renormalize=False)
 
     def broadcast_to(self, shape: T.Union[T.Sequence[int], tf.TensorShape, tf.Tensor]) -> Rot3D:
-        return Rot3D(tf.broadcast_to(self.quat, tf.concat([shape, [4]], axis=0)))
+        return Rot3D(tf.broadcast_to(self.quat, tf.concat([shape, [4]], axis=0)), renormalize=False)
 
     @classmethod
     def identity(cls, size: T.Tuple[int, ...] = (), dtype: tf.DType = tf.float32) -> Rot3D:
-        return Rot3D(tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0], dtype=dtype), size + (4,)))
+        return Rot3D(
+            tf.broadcast_to(tf.constant([0.0, 0.0, 0.0, 1.0], dtype=dtype), size + (4,)),
+            renormalize=False
+        )
 
     @classmethod
     def from_matrix(cls, rot_mat: tf.Tensor) -> Rot3D:
