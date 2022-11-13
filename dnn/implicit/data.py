@@ -22,11 +22,11 @@ class PointLoader:
             fov_xy=np.array((89.903625, 58.633181)),
         ),
         img_size=(256, 144),
-        batch_size=8192,
+        batch_size=40000,
         max_depth=100.,
         min_depth=0.3,
         random_rotation_angle=30.,
-        epoch_size=1000,
+        epoch_size=3000,
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
@@ -77,16 +77,17 @@ class PointLoader:
             img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int32) * i)
 
         points_cam = tf.concat(points_cam, axis=0)
-        self.raw_dataset = tf.data.Dataset.from_tensors({
+        self.data_dict = {
             "depth_imgs": tf.stack(depth_imgs),
             "color_imgs": tf.stack(color_imgs),
             "ref_T_cams": tf.stack(ref_T_cams),
             "points_cam": points_cam,
             "colors": tf.concat(colors, axis=0),
-            "directions_cam": tf.math.l2_normalize(points_cam, axis=-1),
+            "directions_cam": tf.linalg.normalize(points_cam, axis=-1)[0],
             "img_indics": tf.concat(img_indics, axis=0),
-        })
-        self.dataset = self.raw_dataset.repeat(self.p.epoch_size)
+        }
+        self.dataset = tf.data.Dataset.from_tensors(self.data_dict)
+        self.dataset = self.dataset.repeat(self.p.epoch_size)
         self.dataset = self.dataset.map(self.data_process)
         self.dataset = self.dataset.prefetch(10)
 
@@ -123,11 +124,10 @@ class PointLoader:
                                 size=(self.p.batch_size,))
         directions_pert_b3 = R_rand_b @ directions_b3
 
-        # random depth drawn from log uniform distribution (lower probability for large depth)
-        depth_rand_b = tf.exp(tf.random.uniform(
+        depth_rand_b = tf.exp(tf.random.normal(
             shape=(self.p.batch_size,),
-            minval=tf.math.log(float(self.p.min_depth)),
-            maxval=tf.math.log(float(self.p.max_depth)),
+            mean=tf.math.log(tf.linalg.norm(points_b3, axis=-1)),
+            stddev=0.3,
         ))
 
         positions_b3 = points_b3 - depth_rand_b[..., tf.newaxis] * directions_pert_b3

@@ -71,9 +71,9 @@ class MLP(tfk.Model):
 class NeRD:
 
     DEFAULT_PARAMS = ParamDict(
-        mlp_layers = 5,
-        mlp_width = 64,
-        mlp_weight_decay = 1e-4,
+        mlp_layers = 6,
+        mlp_width = 128,
+        mlp_weight_decay = None,
         num_dir_freq = 10,
         num_pos_freq = 10,
     )
@@ -84,7 +84,7 @@ class NeRD:
             units=1,
             num_layers=self.p.mlp_layers,
             num_hidden=self.p.mlp_width,
-            output_activation="exponential",
+            output_activation="softplus",
             weight_decay=self.p.mlp_weight_decay,
         )
 
@@ -97,7 +97,7 @@ class NeRD:
                                  tf.range(img_size[1], dtype=world_T_cam.dtype),
                                  indexing="xy")
         grid_hw2 = tf.stack([x_hw, y_hw], axis=-1)
-        unit_ray_hw3 = camera.unit_ray(grid_hw2)
+        unit_ray_hw3 = world_T_cam.R @ camera.unit_ray(grid_hw2)
         position_hw3 = tf.broadcast_to(world_T_cam.t, tf.shape(unit_ray_hw3))
 
         mlp_input = self.input_encoding(position_hw3, unit_ray_hw3)
