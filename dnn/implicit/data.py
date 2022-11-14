@@ -22,9 +22,9 @@ class PointLoader:
             fov_xy=np.array((89.903625, 58.633181)),
         ),
         img_size=(256, 144),
-        batch_size=20000,
+        batch_size=40000,
         min_depth=0.3,
-        random_rotation_angle=30.,
+        perturb_scale=2.0,
         epoch_size=3000,
     )
 
@@ -115,21 +115,11 @@ class PointLoader:
             "inv_range_virtual_hw1": tf.gather(data_dict["inv_range_imgs"], rand_img_idx),
         }
 
-    def generate_samples(self,
-        points_b3: tf.Tensor,
-        directions_b3: tf.Tensor
-    ) -> T.Tuple[tf.Tensor, tf.Tensor]:
-        R_rand_b = Rot3D.random(math.radians(self.p.random_rotation_angle),
-                                size=(self.p.batch_size,))
-        directions_pert_b3 = R_rand_b @ directions_b3
+    def generate_samples(self, points_cam_b3: tf.Tensor) -> T.Tuple[tf.Tensor, ...]:
+        random_points_b3 = tf.random.normal((self.p.batch_size, 3), stddev=self.p.perturb_scale)
+        rand_t_point_b3 = points_cam_b3 - random_points_b3
+        directions_b3, range_b1 = tf.linalg.normalize(rand_t_point_b3, axis=-1)
+        inv_range_b = 1. / range_b1[..., 0]
 
-        inv_range_rand_b = tf.exp(-tf.random.normal(
-            shape=(self.p.batch_size,),
-            mean=tf.math.log(tf.linalg.norm(points_b3, axis=-1)),
-            stddev=0.3,
-        ))
-
-        positions_b3 = points_b3 - directions_pert_b3 / inv_range_rand_b[..., tf.newaxis]
-
-        return positions_b3, directions_pert_b3, inv_range_rand_b
+        return random_points_b3, directions_b3, inv_range_b
 

@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 import os
 import typing as T
@@ -27,25 +28,31 @@ class Trainer:
 
     DEFAULT_PARAMS = ParamDict(
         num_epochs=1000,
-        save_freq=5,
+        save_freq=20,
+        lr=ParamDict(
+            init=1e-3,
+            end=1e-5,
+            delay=100000,
+        ),
     )
 
     def __init__(self, params: ParamDict, output_dir: str) -> None:
         self.p = params.trainer
         self.data = PointLoader(params.data)
         self.model = NeRD(params.model)
-        self.optimizer = tfk.optimizers.Adam(1e-3)
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
         self.ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
         self.log_dir = os.path.join(output_dir, sess_dir, "logs")
         self.train_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "train"))
         self.val_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "validation"))
         self.global_step = tf.Variable(0, trainable=False, dtype=tf.int64)
+        self.lr = tf.Variable(0., trainable=False, dtype=tf.float32)
+        self.optimizer = tfk.optimizers.Adam(self.lr)
 
     def compute_loss(self, data_dict: T_DATA_DICT) -> tf.Tensor:
         # transform from cam to reference
         pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_samples(
-            data_dict["points_cam_b3"], data_dict["directions_cam_b3"])
+            data_dict["points_cam_b3"])
 
         # TODO(alvin): support not using GT here
         pos_ref_b3 = data_dict["ref_T_cam_b"] @ pos_cam_b3
@@ -53,12 +60,13 @@ class Trainer:
 
         # MLP inference
         mlp_input = self.model.input_encoding(pos_ref_b3, dir_ref_b3)
-        inv_range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 1e-3)
+        inv_range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 1e-3) # max range 1000 meters
         inv_range_pred_b = inv_range_pred_b1[:, 0]
 
         # forward direction loss
         loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
-                                   inv_range_pred_b <= inv_range_gt_b)
+            (inv_range_pred_b <= inv_range_gt_b) & \
+            (tf.math.acos(tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])) <= math.radians(30)))
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
@@ -86,33 +94,68 @@ class Trainer:
 
         return loss_f_b, loss_b_b
 
+    def lr_schedule(self, step: tf.Tensor) -> tf.Tensor:
+        step_float = tf.cast(step, tf.float32)
+
+        # compute no delay base lr
+        num_steps = self.p.num_epochs * self.data.p.epoch_size
+        step_diff = (math.log(self.p.lr.end) - math.log(self.p.lr.init)) / num_steps
+        base_lr = tf.exp(math.log(self.p.lr.init) + step_float * step_diff)
+
+        # apply warm start multiplier
+        mult = 1.
+        if step < self.p.lr.delay:
+            mult = (tf.sin(step_float / float(self.p.lr.delay) * math.pi - math.pi / 2) + 1.) / 2.
+
+        return mult * base_lr
+
     @tf.function
     def train_step(self, data_dict: T_DATA_DICT):
+        self.lr.assign(self.lr_schedule(self.global_step))
+
         with tf.GradientTape() as tape:
             loss_f_b, loss_b_b = self.compute_loss(data_dict)
-            loss_f = tf.reduce_mean(loss_f_b)
-            loss_b = tf.reduce_mean(loss_b_b)
+
+            loss_f = 0.
+            loss_b = 0.
+            if tf.shape(loss_f_b)[0] > 0:
+                loss_f = tf.reduce_mean(loss_f_b)
+            if tf.shape(loss_b_b)[0] > 0:
+                loss_b = tf.reduce_mean(loss_b_b)
+
             loss = loss_f + loss_b
 
-        tf.summary.scalar("forward loss", loss_f, step=self.global_step)
-        tf.summary.scalar("backword loss", loss_b, step=self.global_step)
-        tf.summary.scalar("total loss", loss, step=self.global_step)
+        with tf.name_scope("Losses"):
+            tf.summary.scalar("forward loss", loss_f, step=self.global_step)
+            tf.summary.scalar("backword loss", loss_b, step=self.global_step)
+            tf.summary.scalar("total loss", loss, step=self.global_step)
+
+        with tf.name_scope("Misc"):
+            tf.summary.scalar("learning rate", self.lr, step=self.global_step)
+
         self.global_step.assign_add(1)
 
         grad = tape.gradient(loss, self.model.mlp.trainable_variables)
         self.optimizer.apply_gradients(zip(grad, self.model.mlp.trainable_variables))
 
+    def normalize_inv_range(self, inv_range_khw1):
+        inv_min = tf.reduce_min(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
+        inv_max = tf.reduce_max(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
+        return (inv_range_khw1 - inv_min) / (inv_max - inv_min)
+
     @tf.function
     def validate_step(self):
-        inv_range = self.model.render_inv_range(
-            self.data.p.img_size, self.data.p.cam, Pose3D.identity())
-        inv_min = tf.reduce_min(inv_range)
-        inv_max = tf.reduce_max(inv_range)
-        inv_range_norm = (inv_range - inv_min) / (inv_max - inv_min)
-        tf.summary.image("rendered inverse range", inv_range_norm[tf.newaxis],
+        inv_range_khw1 = self.model.render_inv_range(
+            self.data.p.img_size, self.data.p.cam, self.data.data_dict["ref_T_cams"])
+        tf.summary.image("rendered inverse range", self.normalize_inv_range(inv_range_khw1),
                          step=self.global_step)
 
     def run(self, debug: bool = False) -> None:
+        with self.val_writer.as_default():
+            tf.summary.image("gt inverse range",
+                             self.normalize_inv_range(self.data.data_dict["inv_range_imgs"]),
+                             step=0)
+
         for epoch in range(self.p.num_epochs):
             with self.train_writer.as_default():
                 for data_dict in self.data.dataset:
