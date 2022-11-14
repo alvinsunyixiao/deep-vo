@@ -71,10 +71,10 @@ class MLP(tfk.Model):
 class NeRD:
 
     DEFAULT_PARAMS = ParamDict(
-        mlp_layers = 6,
-        mlp_width = 128,
+        mlp_layers = 7,
+        mlp_width = 256,
         mlp_weight_decay = None,
-        num_dir_freq = 8,
+        num_dir_freq = 10,
         num_pos_freq = 10,
     )
 

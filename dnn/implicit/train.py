@@ -62,23 +62,25 @@ class Trainer:
         inv_range_pred_b = inv_range_pred_b1[:, 0]
 
         # forward direction loss
+        cos_dir_diff_b = tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])
+        cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
         loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
             (inv_range_pred_b <= inv_range_gt_b) & \
-            (tf.math.acos(tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])) <= math.radians(30)))
+            (tf.math.acos(cos_dir_diff_b) <= math.radians(30)))
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
         # TODO(alvin): again, support not using GT here
         points_virtual_pred_b3 = data_dict["ref_T_virtual"].inv() @ points_ref_pred_b3
+        points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3,
+            points_virtual_pred_b3[..., -1] >= self.data.p.min_depth)
         depth_virtual_proj_b = tf.linalg.norm(points_virtual_pred_b3, axis=-1)
         pixels_uv_b2 = self.data.p.cam.project(points_virtual_pred_b3)
 
         # filter out invalid pixels
-        valid_mask_b = (depth_virtual_proj_b >= self.data.p.min_depth) & \
-                       (points_virtual_pred_b3[:, -1] > 0) & \
-                       (pixels_uv_b2[:, 0] >= 0) & (pixels_uv_b2[:, 1] >= 0) & \
+        valid_mask_b = (pixels_uv_b2[:, 0] >= 0) & (pixels_uv_b2[:, 1] >= 0) & \
                        (pixels_uv_b2[:, 0] <= self.data.p.img_size[0] - 1.) & \
-                       (pixels_uv_b2[:, 1] <= self.data.p.img_size[0] - 1.)
+                       (pixels_uv_b2[:, 1] <= self.data.p.img_size[1] - 1.)
         pixels_uv_b2 = tf.boolean_mask(pixels_uv_b2, valid_mask_b)
         points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3, valid_mask_b)
         depth_virtual_proj_b = tf.boolean_mask(depth_virtual_proj_b, valid_mask_b)

@@ -16,13 +16,13 @@ class PointLoader:
 
     DEFAULT_PARAMS = ParamDict(
         data_path="/data/airsim/implicit/scene1.pkl",
-        num_images=1,
+        num_images=4,
         cam=PinholeCam.from_size_and_fov(
             size_xy=np.array((256, 144)),
             fov_xy=np.array((89.903625, 58.633181)),
         ),
         img_size=(256, 144),
-        batch_size=40000,
+        batch_size=65536,
         min_depth=0.3,
         perturb_scale=2.0,
         epoch_size=3000,
@@ -67,7 +67,7 @@ class PointLoader:
             ref_T_cams.append(world_T_ref.inv() @ Pose3D.from_storage(data_dict["pose"]))
 
             # use samples that live in valid depth range
-            valid_indics_yx_k2 = tf.where(range_img[..., 0] >= self.p.min_depth)
+            valid_indics_yx_k2 = tf.where(depth[..., 0] >= self.p.min_depth)
 
             grid_hw2 = cam.compute_grid(range_img)
             grid_k2 = tf.gather_nd(grid_hw2, valid_indics_yx_k2)
