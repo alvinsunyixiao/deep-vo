@@ -43,8 +43,6 @@ class Trainer:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
         self.ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
         self.log_dir = os.path.join(output_dir, sess_dir, "logs")
-        self.train_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "train"))
-        self.val_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "validation"))
         self.global_step = tf.Variable(0, trainable=False, dtype=tf.int64)
         self.lr = tf.Variable(0., trainable=False, dtype=tf.float32)
         self.optimizer = tfk.optimizers.Adam(self.lr)
@@ -151,17 +149,20 @@ class Trainer:
                          step=self.global_step)
 
     def run(self, debug: bool = False) -> None:
-        with self.val_writer.as_default():
+        train_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "train"))
+        val_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "validation"))
+
+        with val_writer.as_default():
             tf.summary.image("gt inverse range",
                              self.normalize_inv_range(self.data.data_dict["inv_range_imgs"]),
                              step=0)
 
         for epoch in range(self.p.num_epochs):
-            with self.train_writer.as_default():
+            with train_writer.as_default():
                 for data_dict in self.data.dataset:
                     self.train_step(data_dict)
 
-            with self.val_writer.as_default():
+            with val_writer.as_default():
                 self.validate_step()
 
             if not debug and epoch % self.p.save_freq == 0:
