@@ -64,9 +64,8 @@ class Trainer:
         depth_pred_b = depth_pred_b1[:, 0]
 
         # forward direction loss
-        loss_f_b = tf.boolean_mask(depth_pred_b - depth_gt_b,
+        loss_f_b = tf.boolean_mask((depth_pred_b - depth_gt_b) / (depth_pred_b + depth_gt_b),
                                    depth_pred_b >= depth_gt_b)
-        loss_f_b = tf.square(depth_pred_b - depth_gt_b)
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 * depth_pred_b1
@@ -90,7 +89,7 @@ class Trainer:
         depth_sampled_b = tfa.image.resampler(data_dict["depth_virtual_hw1"][tf.newaxis],
                                               pixels_uv_b2[tf.newaxis])[0, :, 0]
         depth_sampled_b = tf.minimum(depth_sampled_b, self.p.data.max_depth)
-        loss_b_b = tf.boolean_mask(depth_sampled_b - depth_virtual_proj_b,
+        loss_b_b = tf.boolean_mask((depth_sampled_b - depth_virtual_proj_b) / (depth_sampled_b + depth_virtual_proj_b),
                                    depth_sampled_b >= depth_virtual_proj_b)
 
         return loss_f_b, loss_b_b
@@ -101,7 +100,7 @@ class Trainer:
             loss_f_b, loss_b_b = self.compute_loss(data_dict)
             loss_f = tf.reduce_mean(loss_f_b)
             loss_b = tf.reduce_mean(loss_b_b)
-            loss = loss_f #+ loss_b
+            loss = loss_f + loss_b
 
         tf.summary.scalar("forward loss", loss_f, step=self.global_step)
         tf.summary.scalar("backword loss", loss_b, step=self.global_step)
