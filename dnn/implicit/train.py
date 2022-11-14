@@ -1,5 +1,4 @@
 import argparse
-import math
 import time
 import os
 import typing as T
@@ -44,14 +43,8 @@ class Trainer:
         self.global_step = tf.Variable(0, trainable=False, dtype=tf.int64)
 
     def compute_loss(self, data_dict: T_DATA_DICT) -> tf.Tensor:
-        # generate ground truth ray samples
-
-        cam_T_virtual_b = Pose3D.random(max_angle=math.radians(30),
-                                        max_translate=2.,
-                                        size=(self.data.p.batch_size,))
-
         # transform from cam to reference
-        pos_cam_b3, dir_cam_b3, depth_gt_b = self.data.generate_samples(
+        pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_samples(
             data_dict["points_cam_b3"], data_dict["directions_cam_b3"])
 
         # TODO(alvin): support not using GT here
@@ -60,37 +53,36 @@ class Trainer:
 
         # MLP inference
         mlp_input = self.model.input_encoding(pos_ref_b3, dir_ref_b3)
-        depth_pred_b1 = self.model.mlp(mlp_input)
-        depth_pred_b = depth_pred_b1[:, 0]
+        inv_range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 1e-3)
+        inv_range_pred_b = inv_range_pred_b1[:, 0]
 
         # forward direction loss
-        loss_f_b = tf.boolean_mask((depth_pred_b - depth_gt_b) / (depth_pred_b + depth_gt_b),
-                                   depth_pred_b >= depth_gt_b)
+        loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
+                                   inv_range_pred_b <= inv_range_gt_b)
 
         # backward direction loss
-        points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 * depth_pred_b1
+        points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
         # TODO(alvin): again, support not using GT here
         points_virtual_pred_b3 = data_dict["ref_T_virtual"].inv() @ points_ref_pred_b3
         depth_virtual_proj_b = tf.linalg.norm(points_virtual_pred_b3, axis=-1)
-        pixels_uv_b2 = self.p.data.cam.project(points_virtual_pred_b3)
+        pixels_uv_b2 = self.data.p.cam.project(points_virtual_pred_b3)
 
         # filter out invalid pixels
-        valid_mask_b = (depth_virtual_proj_b >= self.p.data.min_depth) & \
-                       (depth_virtual_proj_b <= self.p.data.max_depth) & \
+        valid_mask_b = (depth_virtual_proj_b >= self.data.p.min_depth) & \
                        (points_virtual_pred_b3[:, -1] > 0) & \
                        (pixels_uv_b2[:, 0] >= 0) & (pixels_uv_b2[:, 1] >= 0) & \
-                       (pixels_uv_b2[:, 0] <= self.p.data.img_size[0] - 1.) & \
-                       (pixels_uv_b2[:, 1] <= self.p.data.img_size[0] - 1.)
+                       (pixels_uv_b2[:, 0] <= self.data.p.img_size[0] - 1.) & \
+                       (pixels_uv_b2[:, 1] <= self.data.p.img_size[0] - 1.)
         pixels_uv_b2 = tf.boolean_mask(pixels_uv_b2, valid_mask_b)
         points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3, valid_mask_b)
         depth_virtual_proj_b = tf.boolean_mask(depth_virtual_proj_b, valid_mask_b)
+        inv_range_proj_b = 1. / depth_virtual_proj_b
 
         # sample from depth image
-        depth_sampled_b = tfa.image.resampler(data_dict["depth_virtual_hw1"][tf.newaxis],
+        inv_range_sampled_b = tfa.image.resampler(data_dict["inv_range_virtual_hw1"][tf.newaxis],
                                               pixels_uv_b2[tf.newaxis])[0, :, 0]
-        depth_sampled_b = tf.minimum(depth_sampled_b, self.p.data.max_depth)
-        loss_b_b = tf.boolean_mask((depth_sampled_b - depth_virtual_proj_b) / (depth_sampled_b + depth_virtual_proj_b),
-                                   depth_sampled_b >= depth_virtual_proj_b)
+        loss_b_b = tf.boolean_mask(tf.square(inv_range_proj_b - inv_range_sampled_b),
+                                   inv_range_sampled_b <= inv_range_proj_b)
 
         return loss_f_b, loss_b_b
 
@@ -112,16 +104,16 @@ class Trainer:
 
     @tf.function
     def validate_step(self):
-        r_depth = self.model.render_depth(self.p.data.img_size, self.p.data.cam, Pose3D.identity())
-        r_inv_depth = 1. / r_depth
-        r_inv_min = tf.reduce_min(r_inv_depth)
-        r_inv_max = tf.reduce_max(r_inv_depth)
-        r_inv_depth_norm = (r_inv_depth - r_inv_min) / (r_inv_max - r_inv_min)
-        tf.summary.image("rendered inverse range", r_inv_depth_norm[tf.newaxis],
+        inv_range = self.model.render_inv_range(
+            self.data.p.img_size, self.data.p.cam, Pose3D.identity())
+        inv_min = tf.reduce_min(inv_range)
+        inv_max = tf.reduce_max(inv_range)
+        inv_range_norm = (inv_range - inv_min) / (inv_max - inv_min)
+        tf.summary.image("rendered inverse range", inv_range_norm[tf.newaxis],
                          step=self.global_step)
 
-    def run(self) -> None:
-        for epoch in range(self.p.trainer.num_epochs):
+    def run(self, debug: bool = False) -> None:
+        for epoch in range(self.p.num_epochs):
             with self.train_writer.as_default():
                 for data_dict in self.data.dataset:
                     self.train_step(data_dict)
@@ -129,7 +121,7 @@ class Trainer:
             with self.val_writer.as_default():
                 self.validate_step()
 
-            if epoch % self.p.trainer.save_freq == 0:
+            if not debug and epoch % self.p.save_freq == 0:
                 self.model.mlp.save(os.path.join(self.ckpt_dir, f"epoch-{epoch}"))
 
 if __name__ == "__main__":

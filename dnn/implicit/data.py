@@ -1,3 +1,4 @@
+import math
 import pickle
 import random
 import typing as T
@@ -61,7 +62,7 @@ class PointLoader:
             range_img = tf.linalg.norm(cam.unproject(depth), axis=-1, keepdims=True)
             inv_range_img = 1. / range_img
 
-            inv_range_imgs.append(1. / range_img)
+            inv_range_imgs.append(inv_range_img)
             color_imgs.append(img)
             ref_T_cams.append(world_T_ref.inv() @ Pose3D.from_storage(data_dict["pose"]))
 
@@ -98,12 +99,37 @@ class PointLoader:
                                        maxval=data_dict["img_indics"].shape[0],
                                        dtype=tf.int32)
         img_idx_b = tf.gather(data_dict["img_indics"], rand_idx_b)
+        ref_T_cam_b = tf.gather(data_dict["ref_T_cams"], img_idx_b)
+        rand_img_idx = tf.random.uniform((), maxval=self.p.num_images, dtype=tf.int32)
 
         return {
             "points_cam_b3": tf.gather(data_dict["points_cam"], rand_idx_b),
             "colors_b3": tf.gather(data_dict["colors"], rand_idx_b),
             "directions_cam_b3": tf.gather(data_dict["directions_cam"], rand_idx_b),
-            "inv_ranges_b1"
+            "inv_ranges_b1": tf.gather(data_dict["inv_ranges"], rand_idx_b),
             "img_idx_b": img_idx_b,
-            "ref_T_cam_b": tf.gather(data_dict["ref_T_cams"], img_idx_b),
+            "ref_T_cam_b": ref_T_cam_b,
+            "virtual_idx": rand_img_idx,
+            "ref_T_virtual": tf.gather(data_dict["ref_T_cams"], rand_img_idx),
+            "color_virtual_hw3": tf.gather(data_dict["color_imgs"], rand_img_idx),
+            "inv_range_virtual_hw1": tf.gather(data_dict["inv_range_imgs"], rand_img_idx),
         }
+
+    def generate_samples(self,
+        points_b3: tf.Tensor,
+        directions_b3: tf.Tensor
+    ) -> T.Tuple[tf.Tensor, tf.Tensor]:
+        R_rand_b = Rot3D.random(math.radians(self.p.random_rotation_angle),
+                                size=(self.p.batch_size,))
+        directions_pert_b3 = R_rand_b @ directions_b3
+
+        inv_range_rand_b = tf.exp(-tf.random.normal(
+            shape=(self.p.batch_size,),
+            mean=tf.math.log(tf.linalg.norm(points_b3, axis=-1)),
+            stddev=0.3,
+        ))
+
+        positions_b3 = points_b3 - directions_pert_b3 / inv_range_rand_b[..., tf.newaxis]
+
+        return positions_b3, directions_pert_b3, inv_range_rand_b
+

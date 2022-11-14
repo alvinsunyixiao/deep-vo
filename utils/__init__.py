@@ -35,6 +35,11 @@ def Rot3D_concat(values: T.List[Rot3D], axis) -> Rot3D:
 def Rot3D_gather(params: Rot3D, indices, validate_indices=None, axis=None, batch_dims=0) -> Rot3D:
     return Rot3D(tf.gather(params.quat, indices), renormalize=False)
 
+@tf.experimental.dispatch_for_api(tf.expand_dims)
+def Rot3D_expand_dims(input: Rot3D, axis) -> Rot3D:
+    axis = axis if axis >= 0 else axis - 1
+    return Rot3D(tf.expand_dims(input.quat, axis=axis), renormalize=False)
+
 
 ################### API Dispatch for Pose3D ###################
 
@@ -75,4 +80,12 @@ def Pose3D_gather(params: Pose3D, indices, validate_indices=None, axis=None, bat
     return Pose3D(
         R = Rot3D(tf.gather(params.R.quat, indices), renormalize=False),
         t = tf.gather(params.t, indices),
+    )
+
+@tf.experimental.dispatch_for_api(tf.expand_dims)
+def Pose3D_expand_dims(input: Pose3D, axis) -> Pose3D:
+    axis = axis if axis >= 0 else axis - 1
+    return Pose3D(
+        R = Rot3D(tf.expand_dims(input.R.quat, axis), renormalize=False),
+        t = tf.expand_dims(input.t, axis=axis),
     )
