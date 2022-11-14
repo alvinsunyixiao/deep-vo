@@ -22,6 +22,20 @@ def tensor_to_feature(tensor: T.Union[np.ndarray, tf.Tensor]) -> tf.train.Featur
 def const_to_feature(data: T.List[T.Any], dtype=None):
     return tensor_to_feature(tf.constant(data, dtype=dtype))
 
+def convert_to_numpy(tensor: T.Union[tf.Tensor, np.ndarray]) -> np.ndarray:
+    if isinstance(tensor, tf.Tensor):
+        assert hasattr(tensor, "numpy"), "Cannot convert symbolic TF tensor to Numpy"
+        tensor = tensor.numpy()
+    return tensor
+
+def cast_if_needed(tensor: T.Union[tf.Tensor, np.ndarray], dtype: tf.DType) -> tf.Tensor:
+    if isinstance(tensor, np.ndarray):
+        return tf.convert_to_tensor(tensor, dtype=dtype)
+    elif tensor.dtype != dtype:
+        return tf.cast(tensor, dtype=dtype)
+    else:
+        return tensor
+
 class ShardedTFRecordWriter:
     def __init__(self, output_dir: str, shard_size: int, start_index: int = 0):
         self.output_dir = output_dir

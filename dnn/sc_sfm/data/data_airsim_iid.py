@@ -97,7 +97,6 @@ class VODataPipe:
         dists_kb.set_shape((self.p.num_perturb, self.p.distance_bins))
 
         poses = Pose3D.from_storage(poses_k7)
-        rots_euler_k3 = poses.R.to_euler()
 
         # filter out invalid samples
         occlusion_ratio = tf.reduce_sum(dists_kb[:, :self.p.max_occlusion_dist], axis=-1)
