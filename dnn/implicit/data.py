@@ -44,6 +44,16 @@ class PointLoader:
         # pick the first image to be reference pose
         world_T_ref = Pose3D.from_storage(data_dicts[0]["pose"])
 
+        # transform from NED to EDN coordinate convention
+        ned_T_edn = Pose3D(
+            R = Rot3D.from_matrix([
+                [0., 0., 1.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            ]),
+            t = tf.zeros(3),
+        )
+
         # parse data
         inv_range_imgs = []
         color_imgs = []
@@ -59,12 +69,16 @@ class PointLoader:
             depth = tf.reshape(data_dict["depth"], (img.shape[0], img.shape[1], 1))
 
             # convert planar depth to perspective depth
-            range_img = tf.linalg.norm(cam.unproject(depth), axis=-1, keepdims=True)
+            p_cam = cam.unproject(depth)
+            range_img = tf.linalg.norm(p_cam, axis=-1, keepdims=True)
             inv_range_img = 1. / range_img
 
             inv_range_imgs.append(inv_range_img)
             color_imgs.append(img)
-            ref_T_cams.append(world_T_ref.inv() @ Pose3D.from_storage(data_dict["pose"]))
+            # transform from NED to EDN
+            ref_T_cams.append(ned_T_edn.inv() @ \
+                              world_T_ref.inv() @ Pose3D.from_storage(data_dict["pose"]) @ \
+                              ned_T_edn)
 
             # use samples that live in valid depth range
             valid_indics_yx_k2 = tf.where(depth[..., 0] >= self.p.min_depth)
@@ -72,8 +86,8 @@ class PointLoader:
             grid_hw2 = cam.compute_grid(range_img)
             grid_k2 = tf.gather_nd(grid_hw2, valid_indics_yx_k2)
             depth_k1 = tf.gather_nd(depth, valid_indics_yx_k2)
-            points_cam.append(cam.unproject(depth_k1, grid_k2))
-            inv_ranges.append(tf.gather_nd(inv_range_imgs[-1], valid_indics_yx_k2))
+            points_cam.append(tf.gather_nd(p_cam, valid_indics_yx_k2))
+            inv_ranges.append(tf.gather_nd(inv_range_img, valid_indics_yx_k2))
             colors.append(tf.gather_nd(img, valid_indics_yx_k2))
             img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int32) * i)
 
@@ -90,7 +104,7 @@ class PointLoader:
         }
         self.dataset = tf.data.Dataset.from_tensors(self.data_dict)
         self.dataset = self.dataset.repeat(self.p.epoch_size)
-        self.dataset = self.dataset.map(self.data_process)
+        self.dataset = self.dataset.map(self.data_process, num_parallel_calls=2, deterministic=False)
         self.dataset = self.dataset.prefetch(10)
 
     def data_process(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
