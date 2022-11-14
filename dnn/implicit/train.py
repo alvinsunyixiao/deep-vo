@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 import os
 import typing as T
@@ -29,9 +30,9 @@ class Trainer:
     )
 
     def __init__(self, params: ParamDict, output_dir: str) -> None:
-        self.p = params
-        self.data = PointLoader(self.p.data)
-        self.model = NeRD(self.p.model)
+        self.p = params.trainer
+        self.data = PointLoader(params.data)
+        self.model = NeRD(params.model)
         self.optimizer = tfk.optimizers.Adam(1e-3)
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
         self.ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
@@ -41,6 +42,12 @@ class Trainer:
         self.global_step = tf.Variable(0, trainable=False, dtype=tf.int64)
 
     def compute_loss(self, data_dict: T_DATA_DICT) -> tf.Tensor:
+        # generate ground truth ray samples
+
+        cam_T_virtual_b = Pose3D.random(max_angle=math.radians(30),
+                                        max_translate=2.,
+                                        size=(self.data.p.batch_size,))
+
         # transform from cam to reference
         pos_cam_b3, dir_cam_b3, depth_gt_b = self.data.generate_samples(
             data_dict["points_cam_b3"], data_dict["directions_cam_b3"])

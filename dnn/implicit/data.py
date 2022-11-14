@@ -1,4 +1,3 @@
-import math
 import pickle
 import random
 import typing as T
@@ -22,8 +21,7 @@ class PointLoader:
             fov_xy=np.array((89.903625, 58.633181)),
         ),
         img_size=(256, 144),
-        batch_size=40000,
-        max_depth=100.,
+        batch_size=20000,
         min_depth=0.3,
         random_rotation_angle=30.,
         epoch_size=3000,
@@ -46,11 +44,12 @@ class PointLoader:
         world_T_ref = Pose3D.from_storage(data_dicts[0]["pose"])
 
         # parse data
-        depth_imgs = []
+        inv_range_imgs = []
         color_imgs = []
         ref_T_cams = []
 
         points_cam = []
+        inv_ranges = []
         colors = []
         img_indics = []
         for i, data_dict in enumerate(data_dicts):
@@ -59,29 +58,31 @@ class PointLoader:
             depth = tf.reshape(data_dict["depth"], (img.shape[0], img.shape[1], 1))
 
             # convert planar depth to perspective depth
-            depth_perspective = tf.linalg.norm(cam.unproject(depth), axis=-1, keepdims=True)
+            range_img = tf.linalg.norm(cam.unproject(depth), axis=-1, keepdims=True)
+            inv_range_img = 1. / range_img
 
-            depth_imgs.append(depth_perspective)
+            inv_range_imgs.append(1. / range_img)
             color_imgs.append(img)
             ref_T_cams.append(world_T_ref.inv() @ Pose3D.from_storage(data_dict["pose"]))
 
             # use samples that live in valid depth range
-            valid_indics_yx_k2 = tf.where((depth_perspective[..., 0] <= self.p.max_depth) & \
-                                          (depth_perspective[..., 0] >= self.p.min_depth))
+            valid_indics_yx_k2 = tf.where(range_img[..., 0] >= self.p.min_depth)
 
-            grid_hw2 = cam.compute_grid(depth_perspective)
+            grid_hw2 = cam.compute_grid(range_img)
             grid_k2 = tf.gather_nd(grid_hw2, valid_indics_yx_k2)
-            depth_k1 = tf.gather_nd(depth_perspective, valid_indics_yx_k2)
+            depth_k1 = tf.gather_nd(depth, valid_indics_yx_k2)
             points_cam.append(cam.unproject(depth_k1, grid_k2))
+            inv_ranges.append(tf.gather_nd(inv_range_imgs[-1], valid_indics_yx_k2))
             colors.append(tf.gather_nd(img, valid_indics_yx_k2))
             img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int32) * i)
 
         points_cam = tf.concat(points_cam, axis=0)
         self.data_dict = {
-            "depth_imgs": tf.stack(depth_imgs),
+            "inv_range_imgs": tf.stack(inv_range_imgs),
             "color_imgs": tf.stack(color_imgs),
             "ref_T_cams": tf.stack(ref_T_cams),
             "points_cam": points_cam,
+            "inv_ranges": tf.concat(inv_ranges, axis=0),
             "colors": tf.concat(colors, axis=0),
             "directions_cam": tf.linalg.normalize(points_cam, axis=-1)[0],
             "img_indics": tf.concat(img_indics, axis=0),
@@ -96,41 +97,13 @@ class PointLoader:
         rand_idx_b = tf.random.uniform((self.p.batch_size,),
                                        maxval=data_dict["img_indics"].shape[0],
                                        dtype=tf.int32)
-
-        points_cam_b3 = tf.gather(data_dict["points_cam"], rand_idx_b)
-        colors_b3 = tf.gather(data_dict["colors"], rand_idx_b)
-        directions_cam_b3 = tf.gather(data_dict["directions_cam"], rand_idx_b)
         img_idx_b = tf.gather(data_dict["img_indics"], rand_idx_b)
-        ref_T_cam_b = tf.gather(data_dict["ref_T_cams"], img_idx_b)
-        rand_img_idx = tf.random.uniform((), maxval=self.p.num_images, dtype=tf.int32)
 
         return {
-            "points_cam_b3": points_cam_b3,
-            "colors_b3": colors_b3,
-            "directions_cam_b3": directions_cam_b3,
+            "points_cam_b3": tf.gather(data_dict["points_cam"], rand_idx_b),
+            "colors_b3": tf.gather(data_dict["colors"], rand_idx_b),
+            "directions_cam_b3": tf.gather(data_dict["directions_cam"], rand_idx_b),
+            "inv_ranges_b1"
             "img_idx_b": img_idx_b,
-            "ref_T_cam_b": ref_T_cam_b,
-            "virtual_idx": rand_img_idx,
-            "ref_T_virtual": tf.gather(data_dict["ref_T_cams"], rand_img_idx),
-            "color_virtual_hw3": tf.gather(data_dict["color_imgs"], rand_img_idx),
-            "depth_virtual_hw1": tf.gather(data_dict["depth_imgs"], rand_img_idx),
+            "ref_T_cam_b": tf.gather(data_dict["ref_T_cams"], img_idx_b),
         }
-
-    def generate_samples(self,
-        points_b3: tf.Tensor,
-        directions_b3: tf.Tensor
-    ) -> T.Tuple[tf.Tensor, tf.Tensor]:
-        R_rand_b = Rot3D.random(math.radians(self.p.random_rotation_angle),
-                                size=(self.p.batch_size,))
-        directions_pert_b3 = R_rand_b @ directions_b3
-
-        depth_rand_b = tf.exp(tf.random.normal(
-            shape=(self.p.batch_size,),
-            mean=tf.math.log(tf.linalg.norm(points_b3, axis=-1)),
-            stddev=0.3,
-        ))
-
-        positions_b3 = points_b3 - depth_rand_b[..., tf.newaxis] * directions_pert_b3
-
-        return positions_b3, directions_pert_b3, depth_rand_b
-
