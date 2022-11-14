@@ -88,19 +88,20 @@ class NeRD:
             weight_decay=self.p.mlp_weight_decay,
         )
 
-    def render_depth(self,
+    def render_inv_range(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,
-        world_T_cam: Pose3D
+        world_T_cam_k: Pose3D
     ) -> tf.Tensor:
-        x_hw, y_hw = tf.meshgrid(tf.range(img_size[0], dtype=world_T_cam.dtype),
-                                 tf.range(img_size[1], dtype=world_T_cam.dtype),
+        world_T_cam_k11 = tf.expand_dims(tf.expand_dims(world_T_cam_k, -1), -1)
+        x_hw, y_hw = tf.meshgrid(tf.range(img_size[0], dtype=world_T_cam_k.dtype),
+                                 tf.range(img_size[1], dtype=world_T_cam_k.dtype),
                                  indexing="xy")
         grid_hw2 = tf.stack([x_hw, y_hw], axis=-1)
-        unit_ray_hw3 = world_T_cam.R @ camera.unit_ray(grid_hw2)
-        position_hw3 = tf.broadcast_to(world_T_cam.t, tf.shape(unit_ray_hw3))
+        unit_ray_khw3 = world_T_cam_k11.R @ camera.unit_ray(grid_hw2)
+        position_khw3 = tf.broadcast_to(world_T_cam_k11.t, tf.shape(unit_ray_khw3))
 
-        mlp_input = self.input_encoding(position_hw3, unit_ray_hw3)
+        mlp_input = self.input_encoding(position_khw3, unit_ray_khw3)
 
         return self.mlp(mlp_input)
 
