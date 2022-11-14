@@ -71,7 +71,7 @@ class PointLoader:
 
             grid_hw2 = cam.compute_grid(depth_perspective)
             grid_k2 = tf.gather_nd(grid_hw2, valid_indics_yx_k2)
-            depth_k1 = tf.gather_nd(depth_perspective, valid_indics_yx_k2)
+            depth_k1 = tf.gather_nd(depth, valid_indics_yx_k2)
             points_cam.append(cam.unproject(depth_k1, grid_k2))
             colors.append(tf.gather_nd(img, valid_indics_yx_k2))
             img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int32) * i)

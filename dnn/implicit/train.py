@@ -19,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--params", type=str, default="params.py",
                         help="path to the parameter file")
+    parser.add_argument("-o", "--output", type=str, required=True,
+                        help="output directory to store checkpoints and logs")
     return parser.parse_args()
 
 class Trainer:
@@ -128,5 +130,5 @@ if __name__ == "__main__":
     args = parse_args()
     params = ParamDict.from_file(args.params)
 
-    trainer = Trainer(params)
+    trainer = Trainer(params, args.output)
     trainer.run()
