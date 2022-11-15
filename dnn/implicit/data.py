@@ -16,14 +16,14 @@ class PointLoader:
 
     DEFAULT_PARAMS = ParamDict(
         data_path="/data/airsim/implicit/scene1.pkl",
-        num_images=4,
+        num_images=12,
         cam=PinholeCam.from_size_and_fov(
             size_xy=np.array((256, 144)),
             fov_xy=np.array((89.903625, 58.633181)),
         ),
         img_size=(256, 144),
         batch_size=65536,
-        min_depth=0.3,
+        min_depth=0.2,
         perturb_scale=2.0,
         epoch_size=3000,
     )
@@ -39,7 +39,6 @@ class PointLoader:
         if self.p.num_images > 0:
             assert self.p.num_images <= len(data_dicts), \
                 "Requiring more samples than available"
-            data_dicts = data_dicts[:self.p.num_images]
 
         # pick the first image to be reference pose
         world_T_ref = Pose3D.from_storage(data_dicts[0]["pose"])
@@ -104,7 +103,8 @@ class PointLoader:
         }
         self.dataset = tf.data.Dataset.from_tensors(self.data_dict)
         self.dataset = self.dataset.repeat(self.p.epoch_size)
-        self.dataset = self.dataset.map(self.data_process, num_parallel_calls=2, deterministic=False)
+        self.dataset = self.dataset.map(self.data_process,
+                                        num_parallel_calls=4, deterministic=False)
         self.dataset = self.dataset.prefetch(10)
 
     def data_process(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:

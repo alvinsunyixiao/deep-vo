@@ -1,3 +1,6 @@
+from utils.tf_utils import set_tf_memory_growth
+set_tf_memory_growth(True)
+
 import argparse
 import math
 import time
@@ -11,6 +14,8 @@ import tensorflow.keras as tfk
 if T.TYPE_CHECKING:
     from keras.api._v2 import keras as tfk
 
+from tqdm import trange
+
 from dnn.implicit.data import PointLoader, T_DATA_DICT
 from dnn.implicit.model import NeRD
 from utils.pose3d import Pose3D
@@ -18,7 +23,7 @@ from utils.params import ParamDict
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("-p", "--params", type=str, default="params.py",
+    parser.add_argument("-p", "--params", type=str, default="params/default.py",
                         help="path to the parameter file")
     parser.add_argument("-o", "--output", type=str, required=True,
                         help="output directory to store checkpoints and logs")
@@ -28,11 +33,11 @@ class Trainer:
 
     DEFAULT_PARAMS = ParamDict(
         num_epochs=1000,
-        save_freq=20,
+        save_freq=10,
         lr=ParamDict(
             init=1e-3,
             end=1e-5,
-            delay=100000,
+            delay=50000,
         ),
     )
 
@@ -159,7 +164,7 @@ class Trainer:
                              self.normalize_inv_range(self.data.data_dict["inv_range_imgs"]),
                              step=0)
 
-        for epoch in range(self.p.num_epochs):
+        for epoch in trange(self.p.num_epochs, desc="Epoch"):
             with train_writer.as_default():
                 for data_dict in self.data.dataset:
                     self.train_step(data_dict)
@@ -167,8 +172,8 @@ class Trainer:
             with val_writer.as_default():
                 self.validate_step()
 
-            if not debug and epoch % self.p.save_freq == 0:
-                self.model.mlp.save(os.path.join(self.ckpt_dir, f"epoch-{epoch}"))
+            if not debug and epoch % self.p.save_freq == self.p.save_freq - 1:
+                self.model.mlp.save(os.path.join(self.ckpt_dir, f"epoch-{epoch+1}"))
 
 if __name__ == "__main__":
     args = parse_args()
