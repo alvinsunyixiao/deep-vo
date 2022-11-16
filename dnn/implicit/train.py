@@ -35,6 +35,7 @@ class Trainer:
     DEFAULT_PARAMS = ParamDict(
         num_epochs=1000,
         save_freq=10,
+        log_freq=50,
         lr=ParamDict(
             init=1e-3,
             end=1e-5,
@@ -51,7 +52,7 @@ class Trainer:
         self.lr = tf.Variable(0., trainable=False, dtype=tf.float32)
         self.optimizer = tfk.optimizers.Adam(self.lr)
 
-    def compute_loss(self, data_dict: T_DATA_DICT) -> tf.Tensor:
+    def compute_loss(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         # transform from cam to reference
         pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_samples(
             data_dict["points_cam_b3"])
@@ -119,7 +120,12 @@ class Trainer:
         loss_b_b = tf.boolean_mask(tf.square(inv_range_proj_b - inv_range_interp_b),
                                    inv_range_interp_b <= inv_range_proj_b)
 
-        return loss_f_b, loss_b_b
+        return {
+            "loss_f_b": loss_f_b,
+            "loss_b_b": loss_b_b,
+            "pos_ref_b3": pos_ref_b3,
+            "dir_ref_b3": dir_ref_b3,
+        }
 
     def lr_schedule(self, step: tf.Tensor) -> tf.Tensor:
         step_float = tf.cast(step, tf.float32)
@@ -137,18 +143,18 @@ class Trainer:
         return mult * base_lr
 
     @tf.function(jit_compile=True)
-    def train_step(self, data_dict: T_DATA_DICT):
+    def train_step(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         self.lr.assign(self.lr_schedule(self.global_step))
 
         with tf.GradientTape() as tape:
-            loss_f_b, loss_b_b = self.compute_loss(data_dict)
+            meta_dict = self.compute_loss(data_dict)
 
             loss_f = 0.
             loss_b = 0.
-            if tf.shape(loss_f_b)[0] > 0:
-                loss_f = tf.reduce_mean(loss_f_b)
-            if tf.shape(loss_b_b)[0] > 0:
-                loss_b = tf.reduce_mean(loss_b_b)
+            if tf.shape(meta_dict["loss_f_b"])[0] > 0:
+                loss_f = tf.reduce_mean(meta_dict["loss_f_b"])
+            if tf.shape(meta_dict["loss_b_b"])[0] > 0:
+                loss_b = tf.reduce_mean(meta_dict["loss_b_b"])
 
             loss = loss_f + loss_b
 
@@ -157,7 +163,8 @@ class Trainer:
         grad = tape.gradient(loss, self.model.mlp.trainable_variables)
         self.optimizer.apply_gradients(zip(grad, self.model.mlp.trainable_variables))
 
-        return loss, loss_f, loss_b
+        meta_dict.update(data_dict)
+        return meta_dict
 
     def normalize_inv_range(self, inv_range_khw1):
         inv_min = tf.reduce_min(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
@@ -169,6 +176,29 @@ class Trainer:
         inv_range_khw1 = self.model.render_inv_range(
             self.data.p.img_size, self.data.p.cam, self.data.data_dict["ref_T_cams"])
         return self.normalize_inv_range(inv_range_khw1)
+
+    @tf.function
+    def log_step(self, meta_dict):
+        with tf.name_scope("losses"):
+            tf.summary.scalar("forward loss", meta_dict["loss"], step=self.global_step)
+            tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
+            tf.summary.scalar("total loss", meta_dict["loss"], step=self.global_step)
+
+        with tf.name_scope("misc"):
+            tf.summary.scalar("learning rate", self.lr, step=self.global_step)
+
+        with tf.name_scope("data"):
+            with tf.name_scope("pos_ref"):
+                tf.summary.histogram(meta_dict["pos_ref_b3"][:, 0], "x", step=self.global_step)
+                tf.summary.histogram(meta_dict["pos_ref_b3"][:, 1], "y", step=self.global_step)
+                tf.summary.histogram(meta_dict["pos_ref_b3"][:, 2], "z", step=self.global_step)
+            with tf.name_scope("dir_ref"):
+                tf.summary.histogram(meta_dict["dir_ref_b3"][:, 0], "x", step=self.global_step)
+                tf.summary.histogram(meta_dict["dir_ref_b3"][:, 1], "y", step=self.global_step)
+                tf.summary.histogram(meta_dict["dir_ref_b3"][:, 2], "z", step=self.global_step)
+
+        for var in self.model.mlp.trainable_variables:
+            tf.summary.histogram(var.name, var, step=self.global_step)
 
     def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
@@ -189,15 +219,9 @@ class Trainer:
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
             with train_writer.as_default():
                 for data_dict in tqdm(self.data.dataset, desc="Iteration", leave=False):
-                    loss, loss_f, loss_b = self.train_step(data_dict)
-
-                    with tf.name_scope("Losses"):
-                        tf.summary.scalar("forward loss", loss_f, step=self.global_step)
-                        tf.summary.scalar("backword loss", loss_b, step=self.global_step)
-                        tf.summary.scalar("total loss", loss, step=self.global_step)
-
-                    with tf.name_scope("Misc"):
-                        tf.summary.scalar("learning rate", self.lr, step=self.global_step)
+                    meta_dict = self.train_step(data_dict)
+                    if self.global_step % self.p.log_freq == 0:
+                        self.log_step(meta_dict)
 
             inv_range_norm_khw1 = self.validate_step()
             with val_writer.as_default():
