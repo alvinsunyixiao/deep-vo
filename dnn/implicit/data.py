@@ -16,7 +16,7 @@ class PointLoader:
 
     DEFAULT_PARAMS = ParamDict(
         data_path="/data/airsim/implicit/scene1.pkl",
-        num_images=12,
+        num_images=4,
         cam=PinholeCam.from_size_and_fov(
             size_xy=np.array((256, 144)),
             fov_xy=np.array((89.903625, 58.633181)),
@@ -88,7 +88,7 @@ class PointLoader:
             points_cam.append(tf.gather_nd(p_cam, valid_indics_yx_k2))
             inv_ranges.append(tf.gather_nd(inv_range_img, valid_indics_yx_k2))
             colors.append(tf.gather_nd(img, valid_indics_yx_k2))
-            img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int32) * i)
+            img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int64) * i)
 
         points_cam = tf.concat(points_cam, axis=0)
         self.data_dict = {
@@ -107,14 +107,15 @@ class PointLoader:
                                         num_parallel_calls=4, deterministic=False)
         self.dataset = self.dataset.prefetch(10)
 
+    @tf.function(jit_compile=True)
     def data_process(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         # generate random sample indices
         rand_idx_b = tf.random.uniform((self.p.batch_size,),
                                        maxval=data_dict["img_indics"].shape[0],
-                                       dtype=tf.int32)
+                                       dtype=tf.int64)
         img_idx_b = tf.gather(data_dict["img_indics"], rand_idx_b)
         ref_T_cam_b = tf.gather(data_dict["ref_T_cams"], img_idx_b)
-        rand_img_idx = tf.random.uniform((), maxval=self.p.num_images, dtype=tf.int32)
+        rand_img_idx = tf.random.uniform((), maxval=self.p.num_images, dtype=tf.int64)
 
         return {
             "points_cam_b3": tf.gather(data_dict["points_cam"], rand_idx_b),

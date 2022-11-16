@@ -88,6 +88,10 @@ class NeRD:
             weight_decay=self.p.mlp_weight_decay,
         )
 
+        self.save = self.mlp.save
+        self.save_weights = self.mlp.save_weights
+        self.load_weights = self.mlp.load_weights
+
     def render_inv_range(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,

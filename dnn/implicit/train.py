@@ -3,18 +3,17 @@ set_tf_memory_growth(True)
 
 import argparse
 import math
-import time
 import os
+import time
 import typing as T
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
 import tensorflow.keras as tfk
 if T.TYPE_CHECKING:
     from keras.api._v2 import keras as tfk
 
-from tqdm import trange
+from tqdm import tqdm, trange
 
 from dnn.implicit.data import PointLoader, T_DATA_DICT
 from dnn.implicit.model import NeRD
@@ -27,6 +26,8 @@ def parse_args() -> argparse.Namespace:
                         help="path to the parameter file")
     parser.add_argument("-o", "--output", type=str, required=True,
                         help="output directory to store checkpoints and logs")
+    parser.add_argument("-w", "--weights", type=str, default=None,
+                        help="path to load weights from (optional)")
     return parser.parse_args()
 
 class Trainer:
@@ -41,13 +42,11 @@ class Trainer:
         ),
     )
 
-    def __init__(self, params: ParamDict, output_dir: str) -> None:
+    def __init__(self, params: ParamDict) -> None:
         self.p = params.trainer
         self.data = PointLoader(params.data)
         self.model = NeRD(params.model)
-        sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
-        self.ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
-        self.log_dir = os.path.join(output_dir, sess_dir, "logs")
+
         self.global_step = tf.Variable(0, trainable=False, dtype=tf.int64)
         self.lr = tf.Variable(0., trainable=False, dtype=tf.float32)
         self.optimizer = tfk.optimizers.Adam(self.lr)
@@ -91,11 +90,34 @@ class Trainer:
         depth_virtual_proj_b = tf.boolean_mask(depth_virtual_proj_b, valid_mask_b)
         inv_range_proj_b = 1. / depth_virtual_proj_b
 
-        # sample from depth image
-        inv_range_sampled_b = tfa.image.resampler(data_dict["inv_range_virtual_hw1"][tf.newaxis],
-                                              pixels_uv_b2[tf.newaxis])[0, :, 0]
-        loss_b_b = tf.boolean_mask(tf.square(inv_range_proj_b - inv_range_sampled_b),
-                                   inv_range_sampled_b <= inv_range_proj_b)
+        # bilinear interpolate from depth image
+        pixels_lower_x_b = tf.math.floor(pixels_uv_b2[:, 0])
+        pixels_lower_y_b = tf.math.floor(pixels_uv_b2[:, 1])
+        pixels_upper_x_b = tf.math.ceil(pixels_uv_b2[:, 0])
+        pixels_upper_y_b = tf.math.ceil(pixels_uv_b2[:, 1])
+
+        pixels_tl_b2 = tf.stack([pixels_lower_y_b, pixels_lower_x_b], axis=-1)
+        pixels_tr_b2 = tf.stack([pixels_lower_y_b, pixels_upper_x_b], axis=-1)
+        pixels_bl_b2 = tf.stack([pixels_upper_y_b, pixels_lower_x_b], axis=-1)
+        pixels_br_b2 = tf.stack([pixels_upper_y_b, pixels_upper_x_b], axis=-1)
+
+        inv_range_tl_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
+                                      tf.cast(pixels_tl_b2, tf.int32))[:, 0]
+        inv_range_tr_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
+                                      tf.cast(pixels_tr_b2, tf.int32))[:, 0]
+        inv_range_bl_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
+                                      tf.cast(pixels_bl_b2, tf.int32))[:, 0]
+        inv_range_br_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
+                                      tf.cast(pixels_br_b2, tf.int32))[:, 0]
+
+        x_offset_b = pixels_uv_b2[:, 0] - pixels_lower_x_b
+        y_offset_b = pixels_uv_b2[:, 1] - pixels_lower_y_b
+        inv_range_t_b = (1. - x_offset_b) * inv_range_tl_b + x_offset_b * inv_range_tr_b
+        inv_range_b_b = (1. - x_offset_b) * inv_range_bl_b + x_offset_b * inv_range_br_b
+        inv_range_interp_b = (1. - y_offset_b) * inv_range_t_b + y_offset_b * inv_range_b_b
+
+        loss_b_b = tf.boolean_mask(tf.square(inv_range_proj_b - inv_range_interp_b),
+                                   inv_range_interp_b <= inv_range_proj_b)
 
         return loss_f_b, loss_b_b
 
@@ -114,7 +136,7 @@ class Trainer:
 
         return mult * base_lr
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def train_step(self, data_dict: T_DATA_DICT):
         self.lr.assign(self.lr_schedule(self.global_step))
 
@@ -130,34 +152,34 @@ class Trainer:
 
             loss = loss_f + loss_b
 
-        with tf.name_scope("Losses"):
-            tf.summary.scalar("forward loss", loss_f, step=self.global_step)
-            tf.summary.scalar("backword loss", loss_b, step=self.global_step)
-            tf.summary.scalar("total loss", loss, step=self.global_step)
-
-        with tf.name_scope("Misc"):
-            tf.summary.scalar("learning rate", self.lr, step=self.global_step)
-
         self.global_step.assign_add(1)
 
         grad = tape.gradient(loss, self.model.mlp.trainable_variables)
         self.optimizer.apply_gradients(zip(grad, self.model.mlp.trainable_variables))
+
+        return loss, loss_f, loss_b
 
     def normalize_inv_range(self, inv_range_khw1):
         inv_min = tf.reduce_min(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
         inv_max = tf.reduce_max(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
         return (inv_range_khw1 - inv_min) / (inv_max - inv_min)
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def validate_step(self):
         inv_range_khw1 = self.model.render_inv_range(
             self.data.p.img_size, self.data.p.cam, self.data.data_dict["ref_T_cams"])
-        tf.summary.image("rendered inverse range", self.normalize_inv_range(inv_range_khw1),
-                         step=self.global_step)
+        return self.normalize_inv_range(inv_range_khw1)
 
-    def run(self, debug: bool = False) -> None:
-        train_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "train"))
-        val_writer = tf.summary.create_file_writer(os.path.join(self.log_dir, "validation"))
+    def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
+        sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
+        ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
+        log_dir = os.path.join(output_dir, sess_dir, "logs")
+
+        train_writer = tf.summary.create_file_writer(os.path.join(log_dir, "train"))
+        val_writer = tf.summary.create_file_writer(os.path.join(log_dir, "validation"))
+
+        if weights is not None:
+            self.model.load_weights(weights)
 
         with val_writer.as_default():
             tf.summary.image("gt inverse range",
@@ -166,18 +188,28 @@ class Trainer:
 
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
             with train_writer.as_default():
-                for data_dict in self.data.dataset:
-                    self.train_step(data_dict)
+                for data_dict in tqdm(self.data.dataset, desc="Iteration", leave=False):
+                    loss, loss_f, loss_b = self.train_step(data_dict)
 
+                    with tf.name_scope("Losses"):
+                        tf.summary.scalar("forward loss", loss_f, step=self.global_step)
+                        tf.summary.scalar("backword loss", loss_b, step=self.global_step)
+                        tf.summary.scalar("total loss", loss, step=self.global_step)
+
+                    with tf.name_scope("Misc"):
+                        tf.summary.scalar("learning rate", self.lr, step=self.global_step)
+
+            inv_range_norm_khw1 = self.validate_step()
             with val_writer.as_default():
-                self.validate_step()
+                tf.summary.image("rendered inverse range",
+                    inv_range_norm_khw1, step=self.global_step)
 
             if not debug and epoch % self.p.save_freq == self.p.save_freq - 1:
-                self.model.mlp.save(os.path.join(self.ckpt_dir, f"epoch-{epoch+1}"))
+                self.model.save(os.path.join(ckpt_dir, f"epoch-{epoch+1}"))
 
 if __name__ == "__main__":
     args = parse_args()
     params = ParamDict.from_file(args.params)
 
-    trainer = Trainer(params, args.output)
-    trainer.run()
+    trainer = Trainer(params)
+    trainer.run(args.output, args.weights)
