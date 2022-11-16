@@ -120,9 +120,17 @@ class Trainer:
         loss_b_b = tf.boolean_mask(tf.square(inv_range_proj_b - inv_range_interp_b),
                                    inv_range_interp_b <= inv_range_proj_b)
 
+        loss_f = 0.
+        loss_b = 0.
+        if tf.shape(loss_f_b)[0] > 0:
+            loss_f = tf.reduce_mean(loss_f_b)
+        if tf.shape(loss_b_b)[0] > 0:
+            loss_b = tf.reduce_mean(loss_b_b)
+
         return {
-            "loss_f_b": loss_f_b,
-            "loss_b_b": loss_b_b,
+            "loss": loss_f + loss_b,
+            "loss_f": loss_f,
+            "loss_b": loss_b,
             "pos_ref_b3": pos_ref_b3,
             "dir_ref_b3": dir_ref_b3,
         }
@@ -149,36 +157,27 @@ class Trainer:
         with tf.GradientTape() as tape:
             meta_dict = self.compute_loss(data_dict)
 
-            loss_f = 0.
-            loss_b = 0.
-            if tf.shape(meta_dict["loss_f_b"])[0] > 0:
-                loss_f = tf.reduce_mean(meta_dict["loss_f_b"])
-            if tf.shape(meta_dict["loss_b_b"])[0] > 0:
-                loss_b = tf.reduce_mean(meta_dict["loss_b_b"])
-
-            loss = loss_f + loss_b
-
         self.global_step.assign_add(1)
 
-        grad = tape.gradient(loss, self.model.mlp.trainable_variables)
+        grad = tape.gradient(meta_dict["loss"], self.model.mlp.trainable_variables)
         self.optimizer.apply_gradients(zip(grad, self.model.mlp.trainable_variables))
 
         meta_dict.update(data_dict)
         return meta_dict
 
-    def normalize_inv_range(self, inv_range_khw1):
+    def normalize_inv_range(self, inv_range_khw1: tf.Tensor) -> tf.Tensor:
         inv_min = tf.reduce_min(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
         inv_max = tf.reduce_max(inv_range_khw1, axis=(1, 2, 3), keepdims=True)
         return (inv_range_khw1 - inv_min) / (inv_max - inv_min)
 
     @tf.function(jit_compile=True)
-    def validate_step(self):
+    def validate_step(self) -> tf.Tensor:
         inv_range_khw1 = self.model.render_inv_range(
             self.data.p.img_size, self.data.p.cam, self.data.data_dict["ref_T_cams"])
         return self.normalize_inv_range(inv_range_khw1)
 
     @tf.function
-    def log_step(self, meta_dict):
+    def log_step(self, meta_dict: T_DATA_DICT) -> None:
         with tf.name_scope("losses"):
             tf.summary.scalar("forward loss", meta_dict["loss"], step=self.global_step)
             tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
@@ -189,13 +188,13 @@ class Trainer:
 
         with tf.name_scope("data"):
             with tf.name_scope("pos_ref"):
-                tf.summary.histogram(meta_dict["pos_ref_b3"][:, 0], "x", step=self.global_step)
-                tf.summary.histogram(meta_dict["pos_ref_b3"][:, 1], "y", step=self.global_step)
-                tf.summary.histogram(meta_dict["pos_ref_b3"][:, 2], "z", step=self.global_step)
+                tf.summary.histogram("x", meta_dict["pos_ref_b3"][:, 0], step=self.global_step)
+                tf.summary.histogram("y", meta_dict["pos_ref_b3"][:, 1], step=self.global_step)
+                tf.summary.histogram("z", meta_dict["pos_ref_b3"][:, 2], step=self.global_step)
             with tf.name_scope("dir_ref"):
-                tf.summary.histogram(meta_dict["dir_ref_b3"][:, 0], "x", step=self.global_step)
-                tf.summary.histogram(meta_dict["dir_ref_b3"][:, 1], "y", step=self.global_step)
-                tf.summary.histogram(meta_dict["dir_ref_b3"][:, 2], "z", step=self.global_step)
+                tf.summary.histogram("x", meta_dict["dir_ref_b3"][:, 0], step=self.global_step)
+                tf.summary.histogram("y", meta_dict["dir_ref_b3"][:, 1], step=self.global_step)
+                tf.summary.histogram("z", meta_dict["dir_ref_b3"][:, 2], step=self.global_step)
 
         for var in self.model.mlp.trainable_variables:
             tf.summary.histogram(var.name, var, step=self.global_step)
