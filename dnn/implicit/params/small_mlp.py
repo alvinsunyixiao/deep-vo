@@ -10,16 +10,17 @@ PARAMS = DEFAULT_PARAMS(
     model = DEFAULT_PARAMS.model(
         mlp_layers=5,
         mlp_width=128,
-        num_dir_freq=12,
+        num_dir_freq=10,
+        max_dir_freq=16,
         num_pos_freq=10,
     ),
 
     trainer = DEFAULT_PARAMS.trainer(
-        num_epochs=600,
+        num_epochs=1000,
         lr=DEFAULT_PARAMS.trainer.lr(
             init=1e-3,
-            end=2e-5,
-            delay=30000,
+            end=1e-5,
+            delay=50000,
         )
     ),
 )

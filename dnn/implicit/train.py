@@ -162,7 +162,7 @@ class Trainer:
         grad = tape.gradient(meta_dict["loss"], self.model.mlp.trainable_variables)
         self.optimizer.apply_gradients(zip(grad, self.model.mlp.trainable_variables))
 
-        meta_dict.update(data_dict)
+        meta_dict.update(data_dict, grad=grad)
         return meta_dict
 
     def normalize_inv_range(self, inv_range_khw1: tf.Tensor) -> tf.Tensor:
@@ -196,8 +196,13 @@ class Trainer:
                 tf.summary.histogram("y", meta_dict["dir_ref_b3"][:, 1], step=self.global_step)
                 tf.summary.histogram("z", meta_dict["dir_ref_b3"][:, 2], step=self.global_step)
 
-        for var in self.model.mlp.trainable_variables:
-            tf.summary.histogram(var.name, var, step=self.global_step)
+        with tf.name_scope("weights"):
+            for var in self.model.mlp.trainable_variables:
+                tf.summary.histogram(var.name, var, step=self.global_step)
+
+        with tf.name_scope("gradients"):
+            for var, grad in zip(self.model.mlp.trainable_variables, meta_dict["grad"]):
+                tf.summary.histogram(var.name, grad, step=self.global_step)
 
     def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")

@@ -32,7 +32,9 @@ class MLP(tfk.Model):
         num_layers: int,
         num_hidden: int,
         activation: str = "relu",
-        kernel_initializer: str = "glorot_normal",
+        kernel_initializer: tfk.initializers.Initializer = tfk.initializers.GlorotNormal(),
+        output_kernel_initializer: tfk.initializers.Initializer = tfk.initializers.GlorotNormal(),
+        output_bias_initializer: tfk.initializers.Initializer = tfk.initializers.Zeros(),
         output_activation: T.Optional[str] = None,
         weight_decay: T.Optional[float] = None,
         **kwargs
@@ -46,6 +48,9 @@ class MLP(tfk.Model):
         self.num_hidden = num_hidden
         self.activation = activation
         self.kernel_initializer = kernel_initializer
+        self.output_kernel_initializer = output_kernel_initializer
+        self.output_bias_initializer = output_bias_initializer
+        self.output_activation = output_activation
         self.weight_decay = weight_decay
 
         reg = tfk.regularizers.l2(weight_decay) if weight_decay is not None else None
@@ -59,7 +64,8 @@ class MLP(tfk.Model):
         ]
         self.fc_output = tfk.layers.Dense(units=units,
                                           activation=output_activation,
-                                          kernel_initializer=kernel_initializer,
+                                          kernel_initializer=output_kernel_initializer,
+                                          bias_initializer=output_bias_initializer,
                                           name="fc_output")
 
     def call(self, x: tf.Tensor) -> tf.Tensor:
@@ -75,7 +81,10 @@ class NeRD:
         mlp_width = 256,
         mlp_weight_decay = None,
         num_dir_freq = 10,
+        max_dir_freq = None,
         num_pos_freq = 10,
+        max_pos_freq = None,
+        output_bias_init = -3.,
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
@@ -85,6 +94,7 @@ class NeRD:
             num_layers=self.p.mlp_layers,
             num_hidden=self.p.mlp_width,
             output_activation="softplus",
+            output_bias_initializer=tfk.initializers.Constant(self.p.output_bias_init),
             weight_decay=self.p.mlp_weight_decay,
         )
 
@@ -95,7 +105,7 @@ class NeRD:
     def render_inv_range(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,
-        world_T_cam_k: Pose3D
+        world_T_cam_k: Pose3D = Pose3D.identity(),
     ) -> tf.Tensor:
         world_T_cam_k11 = tf.expand_dims(tf.expand_dims(world_T_cam_k, -1), -1)
         x_hw, y_hw = tf.meshgrid(tf.range(img_size[0], dtype=world_T_cam_k.dtype),
@@ -109,8 +119,16 @@ class NeRD:
 
         return self.mlp(mlp_input)
 
-    def frequency_encoding(self, data_bn: tf.Tensor, num_freqs: int) -> tf.Tensor:
-        freq_l = 2. ** tf.range(num_freqs, dtype=data_bn.dtype) * np.pi
+    def frequency_encoding(self,
+        data_bn: tf.Tensor,
+        num_freqs: int,
+        max_freqs: T.Optional[float] = None
+    ) -> tf.Tensor:
+        num_freqs = float(num_freqs)
+        if max_freqs is None:
+            max_freqs = num_freqs
+
+        freq_l = 2. ** (tf.range(num_freqs, dtype=data_bn.dtype) / num_freqs * max_freqs) * np.pi
         spectrum_bnl = data_bn[..., tf.newaxis] * freq_l
 
         batch_shp = tf.shape(data_bn)[:-1]
@@ -119,10 +137,10 @@ class NeRD:
         return tf.concat([data_bn, tf.sin(spectrum_bm), tf.cos(spectrum_bm)], axis=-1)
 
     def directional_encoding(self, unit_ray_k3: tf.Tensor) -> tf.Tensor:
-        return self.frequency_encoding(unit_ray_k3, self.p.num_dir_freq)
+        return self.frequency_encoding(unit_ray_k3, self.p.num_dir_freq, self.p.max_dir_freq)
 
     def positional_encoding(self, position_k3: tf.Tensor) -> tf.Tensor:
-        return self.frequency_encoding(position_k3, self.p.num_pos_freq)
+        return self.frequency_encoding(position_k3, self.p.num_pos_freq, self.p.max_pos_freq)
 
     def input_encoding(self, position_k3: tf.Tensor, unit_ray_k3: tf.Tensor) -> tf.Tensor:
         return tf.concat([
