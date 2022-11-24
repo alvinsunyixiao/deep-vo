@@ -16,7 +16,7 @@ class PointLoader:
 
     DEFAULT_PARAMS = ParamDict(
         data_path="/data/airsim/implicit/scene1.pkl",
-        num_images=4,
+        num_images=12,
         cam=PinholeCam.from_size_and_fov(
             size_xy=np.array((256, 144)),
             fov_xy=np.array((89.903625, 58.633181)),
