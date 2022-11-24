@@ -179,7 +179,7 @@ class Trainer:
     @tf.function
     def log_step(self, meta_dict: T_DATA_DICT) -> None:
         with tf.name_scope("losses"):
-            tf.summary.scalar("forward loss", meta_dict["loss"], step=self.global_step)
+            tf.summary.scalar("forward loss", meta_dict["loss_f"], step=self.global_step)
             tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
             tf.summary.scalar("total loss", meta_dict["loss"], step=self.global_step)
 
