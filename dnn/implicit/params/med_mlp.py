@@ -2,16 +2,16 @@ from dnn.implicit.params.default import PARAMS as DEFAULT_PARAMS
 
 PARAMS = DEFAULT_PARAMS(
     data = DEFAULT_PARAMS.data(
-        batch_size=2**18,
+        batch_size=2**17,
         epoch_size=1000,
-        num_images=12,
+        num_images=10,
     ),
 
     model = DEFAULT_PARAMS.model(
         mlp_layers=6,
         mlp_width=256,
         num_dir_freq=10,
-        max_dir_freq=18,
+        max_dir_freq=14,
         num_pos_freq=10,
     ),
 

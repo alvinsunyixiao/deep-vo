@@ -25,6 +25,8 @@ class PointLoader:
         batch_size=65536,
         min_depth=0.2,
         perturb_scale=2.0,
+        max_forward_dist=5.0,
+        max_reverse_dist=1.0,
         epoch_size=3000,
     )
 
@@ -130,7 +132,7 @@ class PointLoader:
             "inv_range_virtual_hw1": tf.gather(data_dict["inv_range_imgs"], rand_img_idx),
         }
 
-    def generate_samples(self, points_cam_b3: tf.Tensor) -> T.Tuple[tf.Tensor, ...]:
+    def generate_perturb_samples(self, points_cam_b3: tf.Tensor) -> T.Tuple[tf.Tensor, ...]:
         random_points_b3 = tf.random.normal((self.p.batch_size, 3), stddev=self.p.perturb_scale)
         rand_t_point_b3 = points_cam_b3 - random_points_b3
         directions_b3, range_b1 = tf.linalg.normalize(rand_t_point_b3, axis=-1)
@@ -138,3 +140,18 @@ class PointLoader:
 
         return random_points_b3, directions_b3, inv_range_b
 
+    def generate_ray_samples(self,
+        points_cam_b3: tf.Tensor,
+        directions_cam_b3: tf.Tensor,
+    ) -> T.Tuple[tf.Tensor, ...]:
+        original_dists_b1 = tf.linalg.norm(points_cam_b3, axis=-1, keepdims=True)
+        forward_dists_b1 = tf.minimum(self.p.max_forward_dist, original_dists_b1 - self.p.min_depth)
+        random_dists_b1 = tf.random.uniform((self.p.batch_size, 1),
+                                            minval=-self.p.max_reverse_dist,
+                                            maxval=forward_dists_b1)
+
+        random_points_b3 = random_dists_b1 * directions_cam_b3
+        range_b1 = original_dists_b1 - random_dists_b1
+        inv_range_b = 1. / range_b1[:, 0]
+
+        return random_points_b3, directions_cam_b3, inv_range_b

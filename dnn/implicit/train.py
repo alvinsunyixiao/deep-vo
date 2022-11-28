@@ -41,6 +41,9 @@ class Trainer:
             end=1e-5,
             delay=50000,
         ),
+        loss=ParamDict(
+            max_angle_diff=30.,
+        ),
     )
 
     def __init__(self, params: ParamDict) -> None:
@@ -53,10 +56,20 @@ class Trainer:
         self.optimizer = tfk.optimizers.Adam(self.lr)
 
     def compute_loss(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
-        # transform from cam to reference
-        pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_samples(
-            data_dict["points_cam_b3"])
+        pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_ray_samples(
+            data_dict["points_cam_b3"], data_dict["directions_cam_b3"])
+        # TODO(alvin): support not using GT here
+        pos_ref_b3 = data_dict["ref_T_cam_b"] @ pos_cam_b3
+        dir_ref_b3 = data_dict["ref_T_cam_b"].R @ dir_cam_b3
 
+        mlp_input = self.model.input_encoding(pos_ref_b3, dir_ref_b3)
+        inv_range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 1e-3) # max range 1000 meters
+        inv_range_pred_b = inv_range_pred_b1[:, 0]
+        loss_ray_b = tf.square(inv_range_pred_b - inv_range_gt_b)
+
+        # transform from cam to reference
+        pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_perturb_samples(
+            data_dict["points_cam_b3"])
         # TODO(alvin): support not using GT here
         pos_ref_b3 = data_dict["ref_T_cam_b"] @ pos_cam_b3
         dir_ref_b3 = data_dict["ref_T_cam_b"].R @ dir_cam_b3
@@ -71,7 +84,7 @@ class Trainer:
         cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
         loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
             (inv_range_pred_b <= inv_range_gt_b) & \
-            (tf.math.acos(cos_dir_diff_b) <= math.radians(30)))
+            (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff)))
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
@@ -126,11 +139,13 @@ class Trainer:
             loss_f = tf.reduce_mean(loss_f_b)
         if tf.shape(loss_b_b)[0] > 0:
             loss_b = tf.reduce_mean(loss_b_b)
+        loss_ray = tf.reduce_mean(loss_ray_b)
 
         return {
-            "loss": loss_f + loss_b,
+            "loss": loss_f + loss_b + loss_ray,
             "loss_f": loss_f,
             "loss_b": loss_b,
+            "loss_ray": loss_ray,
             "pos_ref_b3": pos_ref_b3,
             "dir_ref_b3": dir_ref_b3,
         }
@@ -181,6 +196,7 @@ class Trainer:
         with tf.name_scope("losses"):
             tf.summary.scalar("forward loss", meta_dict["loss_f"], step=self.global_step)
             tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
+            tf.summary.scalar("ray loss", meta_dict["loss_ray"], step=self.global_step)
             tf.summary.scalar("total loss", meta_dict["loss"], step=self.global_step)
 
         with tf.name_scope("misc"):
@@ -218,7 +234,7 @@ class Trainer:
         with val_writer.as_default():
             tf.summary.image("gt inverse range",
                              self.normalize_inv_range(self.data.data_dict["inv_range_imgs"]),
-                             step=0)
+                             step=0, max_outputs=10)
 
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
             with train_writer.as_default():
@@ -230,7 +246,7 @@ class Trainer:
             inv_range_norm_khw1 = self.validate_step()
             with val_writer.as_default():
                 tf.summary.image("rendered inverse range",
-                    inv_range_norm_khw1, step=self.global_step)
+                    inv_range_norm_khw1, step=self.global_step, max_outputs=10)
 
             if not debug and epoch % self.p.save_freq == self.p.save_freq - 1:
                 self.model.save(os.path.join(ckpt_dir, f"epoch-{epoch+1}"))
