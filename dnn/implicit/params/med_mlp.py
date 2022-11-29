@@ -4,7 +4,6 @@ PARAMS = DEFAULT_PARAMS(
     data = DEFAULT_PARAMS.data(
         batch_size=2**17,
         epoch_size=1000,
-        num_images=10,
     ),
 
     model = DEFAULT_PARAMS.model(

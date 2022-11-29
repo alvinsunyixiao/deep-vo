@@ -69,71 +69,13 @@ class Trainer:
         inv_range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 1e-3) # max range 1000 meters
         inv_range_pred_b = inv_range_pred_b1[:, 0]
 
-        # forward direction loss
         cos_dir_diff_b = tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])
         cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
-        loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
-            (inv_range_pred_b <= inv_range_gt_b) & \
-            (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff)))
-
-        # backward direction loss
-        points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
-        # TODO(alvin): again, support not using GT here
-        points_virtual_pred_b3 = data_dict["ref_T_virtual"].inv() @ points_ref_pred_b3
-        points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3,
-            points_virtual_pred_b3[..., -1] >= self.data.p.min_depth)
-        depth_virtual_proj_b = tf.linalg.norm(points_virtual_pred_b3, axis=-1)
-        pixels_uv_b2 = self.data.p.cam.project(points_virtual_pred_b3)
-
-        # filter out invalid pixels
-        valid_mask_b = (pixels_uv_b2[:, 0] >= 0) & (pixels_uv_b2[:, 1] >= 0) & \
-                       (pixels_uv_b2[:, 0] <= self.data.p.img_size[0] - 1.) & \
-                       (pixels_uv_b2[:, 1] <= self.data.p.img_size[1] - 1.)
-        pixels_uv_b2 = tf.boolean_mask(pixels_uv_b2, valid_mask_b)
-        points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3, valid_mask_b)
-        depth_virtual_proj_b = tf.boolean_mask(depth_virtual_proj_b, valid_mask_b)
-        inv_range_proj_b = 1. / depth_virtual_proj_b
-
-        # bilinear interpolate from depth image
-        pixels_lower_x_b = tf.math.floor(pixels_uv_b2[:, 0])
-        pixels_lower_y_b = tf.math.floor(pixels_uv_b2[:, 1])
-        pixels_upper_x_b = tf.math.ceil(pixels_uv_b2[:, 0])
-        pixels_upper_y_b = tf.math.ceil(pixels_uv_b2[:, 1])
-
-        pixels_tl_b2 = tf.stack([pixels_lower_y_b, pixels_lower_x_b], axis=-1)
-        pixels_tr_b2 = tf.stack([pixels_lower_y_b, pixels_upper_x_b], axis=-1)
-        pixels_bl_b2 = tf.stack([pixels_upper_y_b, pixels_lower_x_b], axis=-1)
-        pixels_br_b2 = tf.stack([pixels_upper_y_b, pixels_upper_x_b], axis=-1)
-
-        inv_range_tl_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
-                                      tf.cast(pixels_tl_b2, tf.int32))[:, 0]
-        inv_range_tr_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
-                                      tf.cast(pixels_tr_b2, tf.int32))[:, 0]
-        inv_range_bl_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
-                                      tf.cast(pixels_bl_b2, tf.int32))[:, 0]
-        inv_range_br_b = tf.gather_nd(data_dict["inv_range_virtual_hw1"],
-                                      tf.cast(pixels_br_b2, tf.int32))[:, 0]
-
-        x_offset_b = pixels_uv_b2[:, 0] - pixels_lower_x_b
-        y_offset_b = pixels_uv_b2[:, 1] - pixels_lower_y_b
-        inv_range_t_b = (1. - x_offset_b) * inv_range_tl_b + x_offset_b * inv_range_tr_b
-        inv_range_b_b = (1. - x_offset_b) * inv_range_bl_b + x_offset_b * inv_range_br_b
-        inv_range_interp_b = (1. - y_offset_b) * inv_range_t_b + y_offset_b * inv_range_b_b
-
-        loss_b_b = tf.boolean_mask(tf.square(inv_range_proj_b - inv_range_interp_b),
-                                   inv_range_interp_b <= inv_range_proj_b)
-
-        loss_f = 0.
-        loss_b = 0.
-        if tf.shape(loss_f_b)[0] > 0:
-            loss_f = tf.reduce_mean(loss_f_b)
-        if tf.shape(loss_b_b)[0] > 0:
-            loss_b = tf.reduce_mean(loss_b_b)
+        loss_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
+            tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff))
 
         return {
-            "loss": loss_f + loss_b,
-            "loss_f": loss_f,
-            "loss_b": loss_b,
+            "loss": tf.reduce_mean(loss_b),
             "pos_ref_b3": pos_ref_b3,
             "dir_ref_b3": dir_ref_b3,
         }
@@ -148,7 +90,7 @@ class Trainer:
 
         # apply warm start multiplier
         mult = 1.
-        if step < self.p.lr.delay:
+        if self.p.lr.delay is not None and step < self.p.lr.delay:
             mult = (tf.sin(step_float / float(self.p.lr.delay) * math.pi - math.pi / 2) + 1.) / 2.
 
         return mult * base_lr
@@ -182,8 +124,6 @@ class Trainer:
     @tf.function
     def log_step(self, meta_dict: T_DATA_DICT) -> None:
         with tf.name_scope("losses"):
-            tf.summary.scalar("forward loss", meta_dict["loss_f"], step=self.global_step)
-            tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
             tf.summary.scalar("total loss", meta_dict["loss"], step=self.global_step)
 
         with tf.name_scope("misc"):
