@@ -41,6 +41,9 @@ class Trainer:
             end=1e-5,
             delay=50000,
         ),
+        loss=ParamDict(
+            max_angle_diff=30.,
+        ),
     )
 
     def __init__(self, params: ParamDict) -> None:
@@ -71,7 +74,7 @@ class Trainer:
         cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
         loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
             (inv_range_pred_b <= inv_range_gt_b) & \
-            (tf.math.acos(cos_dir_diff_b) <= math.radians(30)))
+            (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff)))
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
