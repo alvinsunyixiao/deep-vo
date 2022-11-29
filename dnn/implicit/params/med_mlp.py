@@ -2,7 +2,7 @@ from dnn.implicit.params.default import PARAMS as DEFAULT_PARAMS
 
 PARAMS = DEFAULT_PARAMS(
     data = DEFAULT_PARAMS.data(
-        batch_size=2**17,
+        batch_size=2**18,
         epoch_size=1000,
     ),
 
