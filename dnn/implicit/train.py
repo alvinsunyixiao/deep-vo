@@ -39,10 +39,7 @@ class Trainer:
         lr=ParamDict(
             init=1e-3,
             end=1e-5,
-            delay=50000,
-        ),
-        loss=ParamDict(
-            max_angle_diff=30.,
+            delay=None,
         ),
     )
 
@@ -66,13 +63,9 @@ class Trainer:
 
         # MLP inference
         mlp_input = self.model.input_encoding(pos_ref_b3, dir_ref_b3)
-        inv_range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 1e-3) # max range 1000 meters
-        inv_range_pred_b = inv_range_pred_b1[:, 0]
+        inv_range_dist = self.model.logits_to_dist(self.model.mlp(mlp_input))
 
-        cos_dir_diff_b = tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])
-        cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
-        loss_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
-            tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff))
+        loss_b = -inv_range_dist.log_prob(inv_range_gt_b)
 
         return {
             "loss": tf.reduce_mean(loss_b),

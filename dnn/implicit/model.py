@@ -3,8 +3,11 @@ import typing as T
 import numpy as np
 import tensorflow as tf
 import tensorflow.keras as tfk
+from tensorflow_probability import distributions as tfd
+
 if T.TYPE_CHECKING:
     from keras.api._v2 import keras as tfk
+    import tensorflow_probability.python.distributions as tfd
 
 from utils.pose3d import Pose3D
 from utils.camera import PinholeCam
@@ -84,16 +87,16 @@ class NeRD:
         max_dir_freq = None,
         num_pos_freq = 10,
         max_pos_freq = None,
-        output_bias_init = -3.,
+        output_bias_init = 0.,
+        num_components = 4,
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
         self.p = params
         self.mlp = MLP(
-            units=1,
+            units=2*self.p.num_components,
             num_layers=self.p.mlp_layers,
             num_hidden=self.p.mlp_width,
-            output_activation="softplus",
             output_bias_initializer=tfk.initializers.Constant(self.p.output_bias_init),
             weight_decay=self.p.mlp_weight_decay,
         )
@@ -102,10 +105,20 @@ class NeRD:
         self.save_weights = self.mlp.save_weights
         self.load_weights = self.mlp.load_weights
 
+    def logits_to_dist(self, logits) -> tfd.MixtureSameFamily:
+        return tfd.MixtureSameFamily(
+            mixture_distribution=tfd.Categorical(logits=logits[..., :self.p.num_components]),
+            components_distribution=tfd.Normal(
+                loc=logits[..., self.p.num_components:],
+                scale=tf.ones_like(logits[..., self.p.num_components:]),
+            ),
+        )
+
     def render_inv_range(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,
         world_T_cam_k: Pose3D = Pose3D.identity(),
+        min_prob: T.Optional[float] = None,
     ) -> tf.Tensor:
         world_T_cam_k11 = tf.expand_dims(tf.expand_dims(world_T_cam_k, -1), -1)
         x_hw, y_hw = tf.meshgrid(tf.range(img_size[0], dtype=world_T_cam_k.dtype),
@@ -116,8 +129,20 @@ class NeRD:
         position_khw3 = tf.broadcast_to(world_T_cam_k11.t, tf.shape(unit_ray_khw3))
 
         mlp_input = self.input_encoding(position_khw3, unit_ray_khw3)
+        mlp_output = self.mlp(mlp_input)
 
-        return self.mlp(mlp_input)
+        categorical_khwn = tf.nn.softmax(mlp_output[..., :self.p.num_components])
+        inv_ranges_khwn = tf.maximum(mlp_output[..., self.p.num_components:], 1e-3)
+
+        if min_prob is None:
+            min_prob = 1. / self.p.num_components
+        max_inv_range_khw = tf.zeros_like(inv_ranges_khwn[..., 0])
+        for i in range(self.p.num_components):
+            max_inv_range_khw = tf.where(categorical_khwn[..., i] > min_prob,
+                                         x=tf.maximum(max_inv_range_khw, inv_ranges_khwn[..., i]),
+                                         y=max_inv_range_khw)
+
+        return max_inv_range_khw[..., tf.newaxis]
 
     def frequency_encoding(self,
         data_bn: tf.Tensor,
