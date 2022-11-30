@@ -39,7 +39,7 @@ class Trainer:
         lr=ParamDict(
             init=1e-3,
             end=1e-5,
-            delay=50000,
+            delay=None,
         ),
         loss=ParamDict(
             max_angle_diff=30.,
@@ -72,17 +72,17 @@ class Trainer:
         # forward direction loss
         cos_dir_diff_b = tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])
         cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
-        loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b),
-            (inv_range_pred_b <= inv_range_gt_b) & \
-            (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff)))
+        forward_mask_b = (inv_range_pred_b <= inv_range_gt_b) & \
+                         (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff))
+        loss_f_b = tf.boolean_mask(tf.square(inv_range_pred_b - inv_range_gt_b), forward_mask_b)
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
         # TODO(alvin): again, support not using GT here
         points_virtual_pred_b3 = data_dict["ref_T_virtual"].inv() @ points_ref_pred_b3
+        points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3, ~forward_mask_b)
         points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3,
             points_virtual_pred_b3[..., -1] >= self.data.p.min_depth)
-        depth_virtual_proj_b = tf.linalg.norm(points_virtual_pred_b3, axis=-1)
         pixels_uv_b2 = self.data.p.cam.project(points_virtual_pred_b3)
 
         # filter out invalid pixels
@@ -91,7 +91,7 @@ class Trainer:
                        (pixels_uv_b2[:, 1] <= self.data.p.img_size[1] - 1.)
         pixels_uv_b2 = tf.boolean_mask(pixels_uv_b2, valid_mask_b)
         points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3, valid_mask_b)
-        depth_virtual_proj_b = tf.boolean_mask(depth_virtual_proj_b, valid_mask_b)
+        depth_virtual_proj_b = tf.linalg.norm(points_virtual_pred_b3, axis=-1)
         inv_range_proj_b = 1. / depth_virtual_proj_b
 
         # bilinear interpolate from depth image
@@ -125,15 +125,19 @@ class Trainer:
 
         loss_f = 0.
         loss_b = 0.
-        if tf.shape(loss_f_b)[0] > 0:
+        loss_f_size = tf.shape(loss_f_b)[0]
+        loss_b_size = tf.shape(loss_b_b)[0]
+        if loss_f_size > 0:
             loss_f = tf.reduce_mean(loss_f_b)
-        if tf.shape(loss_b_b)[0] > 0:
+        if loss_b_size > 0:
             loss_b = tf.reduce_mean(loss_b_b)
 
         return {
             "loss": loss_f + loss_b,
             "loss_f": loss_f,
             "loss_b": loss_b,
+            "loss_f_size": loss_f_size,
+            "loss_b_size": loss_b_size,
             "pos_ref_b3": pos_ref_b3,
             "dir_ref_b3": dir_ref_b3,
         }
@@ -148,7 +152,7 @@ class Trainer:
 
         # apply warm start multiplier
         mult = 1.
-        if step < self.p.lr.delay:
+        if self.p.lr.delay is not None and step < self.p.lr.delay:
             mult = (tf.sin(step_float / float(self.p.lr.delay) * math.pi - math.pi / 2) + 1.) / 2.
 
         return mult * base_lr
@@ -185,6 +189,10 @@ class Trainer:
             tf.summary.scalar("forward loss", meta_dict["loss_f"], step=self.global_step)
             tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
             tf.summary.scalar("total loss", meta_dict["loss"], step=self.global_step)
+
+        with tf.name_scope("stats"):
+            tf.summary.scalar("forward count", meta_dict["loss_f_size"], step=self.global_step)
+            tf.summary.scalar("backward count", meta_dict["loss_b_size"], step=self.global_step)
 
         with tf.name_scope("misc"):
             tf.summary.scalar("learning rate", self.lr, step=self.global_step)
