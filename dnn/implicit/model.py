@@ -114,11 +114,10 @@ class NeRD:
             ),
         )
 
-    def render_inv_range(self,
+    def render_inv_range_raw(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,
         world_T_cam_k: Pose3D = Pose3D.identity(),
-        min_prob: T.Optional[float] = None,
     ) -> tf.Tensor:
         world_T_cam_k11 = tf.expand_dims(tf.expand_dims(world_T_cam_k, -1), -1)
         x_hw, y_hw = tf.meshgrid(tf.range(img_size[0], dtype=world_T_cam_k.dtype),
@@ -129,7 +128,23 @@ class NeRD:
         position_khw3 = tf.broadcast_to(world_T_cam_k11.t, tf.shape(unit_ray_khw3))
 
         mlp_input = self.input_encoding(position_khw3, unit_ray_khw3)
-        mlp_output = self.mlp(mlp_input)
+        return self.mlp(mlp_input)
+
+    def render_inv_range_dist(self,
+        img_size: T.Tuple[int, int],
+        camera: PinholeCam,
+        world_T_cam_k: Pose3D = Pose3D.identity(),
+    ) -> tfd.MixtureSameFamily:
+        mlp_output = self.render_inv_range_raw(img_size, camera, world_T_cam_k)
+        return self.logits_to_dist(mlp_output)
+
+    def render_inv_range(self,
+        img_size: T.Tuple[int, int],
+        camera: PinholeCam,
+        world_T_cam_k: Pose3D = Pose3D.identity(),
+        min_prob: T.Optional[float] = None,
+    ) -> tf.Tensor:
+        mlp_output = self.render_inv_range_raw(img_size, camera, world_T_cam_k)
 
         categorical_khwn = tf.nn.softmax(mlp_output[..., :self.p.num_components])
         inv_ranges_khwn = tf.maximum(mlp_output[..., self.p.num_components:], 1e-3)
