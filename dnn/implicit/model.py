@@ -34,7 +34,7 @@ class MLP(tfk.Model):
         units: int,
         num_layers: int,
         num_hidden: int,
-        activation: str = "relu",
+        activation: str = "elu",
         kernel_initializer: tfk.initializers.Initializer = tfk.initializers.GlorotNormal(),
         output_kernel_initializer: tfk.initializers.Initializer = tfk.initializers.GlorotNormal(),
         output_bias_initializer: tfk.initializers.Initializer = tfk.initializers.Zeros(),
