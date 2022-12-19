@@ -85,6 +85,7 @@ class NeRD:
         num_pos_freq = 10,
         max_pos_freq = None,
         output_bias_init = -3.,
+        mlp_activation = "relu",
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
@@ -93,6 +94,7 @@ class NeRD:
             units=1,
             num_layers=self.p.mlp_layers,
             num_hidden=self.p.mlp_width,
+            activation=self.p.mlp_activation,
             output_activation="softplus",
             output_bias_initializer=tfk.initializers.Constant(self.p.output_bias_init),
             weight_decay=self.p.mlp_weight_decay,
