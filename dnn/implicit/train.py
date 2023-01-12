@@ -41,6 +41,11 @@ class Trainer:
             end=1e-5,
             delay=None,
         ),
+        # set to None to disable frequency band masking
+        freq_mask=ParamDict(
+            start=100,
+            end=600,
+        ),
         loss=ParamDict(
             max_angle_diff=30.,
         ),
@@ -157,6 +162,13 @@ class Trainer:
 
         return mult * base_lr
 
+    def freq_alpha_schedule(self, epoch: int) -> tf.Tensor:
+        if self.p.freq_mask is None:
+            return 1.
+
+        alpha = (epoch - self.p.freq_mask.start) / (self.p.freq_mask.end - self.p.freq_mask.start)
+        return tf.clip_by_value(alpha, 0., 1.)
+
     @tf.function(jit_compile=True)
     def train_step(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         self.lr.assign(self.lr_schedule(self.global_step))
@@ -233,6 +245,10 @@ class Trainer:
 
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
             with train_writer.as_default():
+                freq_alpha = self.freq_alpha_schedule(epoch)
+                tf.summary.scalar("freq_alpha", freq_alpha, step=self.global_step)
+                self.model.set_freq_alpha(freq_alpha)
+
                 for data_dict in tqdm(self.data.dataset, desc="Iteration", leave=False):
                     meta_dict = self.train_step(data_dict)
                     if self.global_step % self.p.log_freq == 0:

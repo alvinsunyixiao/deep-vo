@@ -104,6 +104,12 @@ class NeRD:
         self.save_weights = self.mlp.save_weights
         self.load_weights = self.mlp.load_weights
 
+        self.freq_alpha = tf.Variable(1., trainable=False, dtype=tf.float32)
+
+    def set_freq_alpha(self, alpha: float) -> None:
+        assert alpha >= 0. and alpha <= 1., "alpha must be in range [0, 1]"
+        self.freq_alpha.assign(alpha)
+
     def render_inv_range(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,
@@ -130,13 +136,20 @@ class NeRD:
         if max_freqs is None:
             max_freqs = num_freqs
 
-        freq_l = 2. ** (tf.range(num_freqs, dtype=data_bn.dtype) / num_freqs * max_freqs) * np.pi
+        freq_idx_l = tf.range(num_freqs, dtype=data_bn.dtype)
+        freq_l = 2. ** (freq_idx_l / num_freqs * max_freqs) * np.pi
         spectrum_bnl = data_bn[..., tf.newaxis] * freq_l
 
-        batch_shp = tf.shape(data_bn)[:-1]
-        spectrum_bm = tf.reshape(spectrum_bnl, tf.concat([batch_shp, [-1]], axis=0))
+        freq_mask_l = (freq_idx_l < self.freq_alpha * num_freqs)
+        sin_spec_bnl = tf.where(freq_mask_l, x=tf.sin(spectrum_bnl), y=tf.zeros_like(spectrum_bnl))
+        cos_spec_bnl = tf.where(freq_mask_l, x=tf.cos(spectrum_bnl), y=tf.zeros_like(spectrum_bnl))
 
-        return tf.concat([data_bn, tf.sin(spectrum_bm), tf.cos(spectrum_bm)], axis=-1)
+        batch_shp = tf.shape(data_bn)[:-1]
+        spec_shp = tf.concat([batch_shp, [-1]], axis=0)
+        sin_spec_bm = tf.reshape(sin_spec_bnl, spec_shp)
+        cos_spec_bm = tf.reshape(cos_spec_bnl, spec_shp)
+
+        return tf.concat([data_bn, sin_spec_bm, cos_spec_bm], axis=-1)
 
     def directional_encoding(self, unit_ray_k3: tf.Tensor) -> tf.Tensor:
         return self.frequency_encoding(unit_ray_k3, self.p.num_dir_freq, self.p.max_dir_freq)
