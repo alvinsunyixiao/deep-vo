@@ -41,6 +41,7 @@ class Trainer:
             end=1e-5,
             delay=None,
         ),
+        estimate_pose=True,
         # set to None to disable frequency band masking
         freq_mask=ParamDict(
             start=100,
@@ -60,14 +61,25 @@ class Trainer:
         self.lr = tf.Variable(0., trainable=False, dtype=tf.float32)
         self.optimizer = tfk.optimizers.Adam(self.lr)
 
-    def compute_loss(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
+        self.ref_T_cam_k = self.data.data_dict["ref_T_cams"][:self.data.p.num_images] @ \
+                           Pose3D.random(max_angle=math.radians(30),
+                                         max_translate=.5,
+                                         size=(self.data.p.num_images,))
+
+    def compute_loss(self, data_dict: T_DATA_DICT, ref_T_cam_k: Pose3D) -> T_DATA_DICT:
         # transform from cam to reference
         pos_cam_b3, dir_cam_b3, inv_range_gt_b = self.data.generate_samples(
             data_dict["points_cam_b3"])
 
-        # TODO(alvin): support not using GT here
-        pos_ref_b3 = data_dict["ref_T_cam_b"] @ pos_cam_b3
-        dir_ref_b3 = data_dict["ref_T_cam_b"].R @ dir_cam_b3
+        if self.p.estimate_pose:
+            ref_T_cam_b = tf.gather(ref_T_cam_k, data_dict["img_idx_b"])
+            ref_T_virtual = tf.gather(ref_T_cam_k, data_dict["virtual_idx"])
+        else:
+            ref_T_cam_b = data_dict["ref_T_cam_b"]
+            ref_T_virtual = data_dict["ref_T_virtual"]
+
+        pos_ref_b3 = ref_T_cam_b @ pos_cam_b3
+        dir_ref_b3 = ref_T_cam_b.R @ dir_cam_b3
 
         # MLP inference
         mlp_input = self.model.input_encoding(pos_ref_b3, dir_ref_b3)
@@ -83,8 +95,7 @@ class Trainer:
 
         # backward direction loss
         points_ref_pred_b3 = pos_ref_b3 + dir_ref_b3 / inv_range_pred_b1
-        # TODO(alvin): again, support not using GT here
-        points_virtual_pred_b3 = data_dict["ref_T_virtual"].inv() @ points_ref_pred_b3
+        points_virtual_pred_b3 = ref_T_virtual.inv() @ points_ref_pred_b3
         points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3, ~forward_mask_b)
         points_virtual_pred_b3 = tf.boolean_mask(points_virtual_pred_b3,
             points_virtual_pred_b3[..., -1] >= self.data.p.min_depth)
@@ -137,12 +148,19 @@ class Trainer:
         if loss_b_size > 0:
             loss_b = tf.reduce_mean(loss_b_b)
 
+        # pose loss for logging
+        cams_T_cams_pred = self.data.data_dict["ref_T_cams"][:self.data.p.num_images].inv() @ \
+                           ref_T_cam_k
+        pose_delta = cams_T_cams_pred.to_se3()
+
         return {
             "loss": loss_f + loss_b,
             "loss_f": loss_f,
             "loss_b": loss_b,
             "loss_f_size": loss_f_size,
             "loss_b_size": loss_b_size,
+            "loss_pose_R": tf.reduce_mean(tf.square(pose_delta[..., :3])),
+            "loss_pose_t": tf.reduce_mean(tf.square(pose_delta[..., 3:])),
             "pos_ref_b3": pos_ref_b3,
             "dir_ref_b3": dir_ref_b3,
         }
@@ -170,18 +188,38 @@ class Trainer:
         return tf.clip_by_value(alpha, 0., 1.)
 
     @tf.function(jit_compile=True)
-    def train_step(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
+    def train_step(self, data_dict: T_DATA_DICT, ref_T_cam_k: Pose3D) -> T_DATA_DICT:
         self.lr.assign(self.lr_schedule(self.global_step))
 
         with tf.GradientTape() as tape:
-            meta_dict = self.compute_loss(data_dict)
+            ref_T_cam_k.watch(tape)
+            meta_dict = self.compute_loss(data_dict, ref_T_cam_k)
 
         self.global_step.assign_add(1)
 
-        grad = tape.gradient(meta_dict["loss"], self.model.mlp.trainable_variables)
-        self.optimizer.apply_gradients(zip(grad, self.model.mlp.trainable_variables))
+        variables = {
+            "model": self.model.mlp.trainable_variables,
+            "pose_R": ref_T_cam_k.R.quat,
+            "pose_t": ref_T_cam_k.t,
+        }
+        grad = tape.gradient(meta_dict["loss"], variables)
+        self.optimizer.apply_gradients(zip(grad["model"], variables["model"]))
 
-        meta_dict.update(data_dict, grad=grad)
+        # update pose parameter
+        grad_R_tanget = tf.expand_dims(grad["pose_R"], axis=-2) @ \
+                        ref_T_cam_k.R.storage_D_tangent()
+        grad_R_tanget = grad_R_tanget[..., 0, :]
+        grad_t = tf.convert_to_tensor(grad["pose_t"])
+        grad_se3 = tf.concat([grad_R_tanget, grad_t], axis=-1)
+        #TODO(alvin): make pose lr a variable
+        ref_T_cam_new_k = ref_T_cam_k @ Pose3D.from_se3(-grad_se3 * self.lr * 1e2)
+
+        meta_dict.update(data_dict,
+            grad_model=grad["model"],
+            grad_R=grad_R_tanget,
+            grad_t=grad_t,
+            ref_T_cam_k=ref_T_cam_new_k
+        )
         return meta_dict
 
     def normalize_inv_range(self, inv_range_khw1: tf.Tensor) -> tf.Tensor:
@@ -201,6 +239,8 @@ class Trainer:
             tf.summary.scalar("forward loss", meta_dict["loss_f"], step=self.global_step)
             tf.summary.scalar("backword loss", meta_dict["loss_b"], step=self.global_step)
             tf.summary.scalar("total loss", meta_dict["loss"], step=self.global_step)
+            tf.summary.scalar("pose R loss", meta_dict["loss_pose_R"], step=self.global_step)
+            tf.summary.scalar("pose t loss", meta_dict["loss_pose_t"], step=self.global_step)
 
         with tf.name_scope("stats"):
             tf.summary.scalar("forward count", meta_dict["loss_f_size"], step=self.global_step)
@@ -224,8 +264,12 @@ class Trainer:
                 tf.summary.histogram(var.name, var, step=self.global_step)
 
         with tf.name_scope("gradients"):
-            for var, grad in zip(self.model.mlp.trainable_variables, meta_dict["grad"]):
-                tf.summary.histogram(var.name, grad, step=self.global_step)
+            with tf.name_scope("weights"):
+                for var, grad in zip(self.model.mlp.trainable_variables, meta_dict["grad_model"]):
+                    tf.summary.histogram(var.name, grad, step=self.global_step)
+            with tf.name_scope("pose"):
+                tf.summary.histogram("R", meta_dict["grad_R"], step=self.global_step)
+                tf.summary.histogram("t", meta_dict["grad_t"], step=self.global_step)
 
     def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
@@ -250,7 +294,8 @@ class Trainer:
                 self.model.set_freq_alpha(freq_alpha)
 
                 for data_dict in tqdm(self.data.dataset, desc="Iteration", leave=False):
-                    meta_dict = self.train_step(data_dict)
+                    meta_dict = self.train_step(data_dict, self.ref_T_cam_k)
+                    self.ref_T_cam_k = meta_dict["ref_T_cam_k"]
                     if self.global_step % self.p.log_freq == 0:
                         self.log_step(meta_dict)
 

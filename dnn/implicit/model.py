@@ -84,7 +84,7 @@ class NeRD:
         max_dir_freq = None,
         num_pos_freq = 10,
         max_pos_freq = None,
-        output_bias_init = -3.,
+        output_bias_init = 0.,
         mlp_activation = "relu",
     )
 
@@ -159,7 +159,7 @@ class NeRD:
 
     def input_encoding(self, position_k3: tf.Tensor, unit_ray_k3: tf.Tensor) -> tf.Tensor:
         # TODO: make this a parameter
-        position_k3 /= 10.
+        # position_k3 /= 10.
         return tf.concat([
             self.directional_encoding(unit_ray_k3),
             self.positional_encoding(position_k3),

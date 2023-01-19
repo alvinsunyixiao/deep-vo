@@ -61,6 +61,22 @@ class Rot3D(tf.experimental.BatchableExtensionType):
             quat = quat.numpy()
         return f"Rot3D(quat={quat})"
 
+    def watch(self, tape: tf.GradientTape) -> None:
+        tape.watch(self.quat)
+
+    def storage_D_tangent(self) -> tf.Tensor:
+        half_x = self.quat[..., 0] / 2.
+        half_y = self.quat[..., 1] / 2.
+        half_z = self.quat[..., 2] / 2.
+        half_w = self.quat[..., 3] / 2.
+
+        x_D_tanget = tf.stack([half_w, -half_z, half_y], axis=-1)
+        y_D_tanget = tf.stack([half_z, half_w, -half_x], axis=-1)
+        z_D_tanget = tf.stack([-half_y, half_x, half_w], axis=-1)
+        w_D_tanget = tf.stack([-half_x, -half_y, -half_z], axis=-1)
+
+        return tf.stack([x_D_tanget, y_D_tanget, z_D_tanget, w_D_tanget], axis=-2)
+
     def inv(self) -> Rot3D:
         return Rot3D(quaternion.conjugate(self.quat), renormalize=False)
 
@@ -166,6 +182,10 @@ class Pose3D(tf.experimental.BatchableExtensionType):
         if hasattr(t, "numpy"):
             t = t.numpy()
         return f"Pose3D(R={self.R}, t={t})"
+
+    def watch(self, tape: tf.GradientTape) -> None:
+        self.R.watch(tape)
+        tape.watch(self.t)
 
     def inv(self) -> Pose3D:
         R_inv = self.R.inv()
