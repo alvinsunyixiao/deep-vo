@@ -158,6 +158,8 @@ class NeRD:
         return self.frequency_encoding(position_k3, self.p.num_pos_freq, self.p.max_pos_freq)
 
     def input_encoding(self, position_k3: tf.Tensor, unit_ray_k3: tf.Tensor) -> tf.Tensor:
+        # TODO: make this a parameter
+        position_k3 /= 10.
         return tf.concat([
             self.directional_encoding(unit_ray_k3),
             self.positional_encoding(position_k3),

@@ -10,7 +10,6 @@ PARAMS = DEFAULT_PARAMS(
         mlp_layers=6,
         mlp_width=256,
         num_dir_freq=10,
-        max_dir_freq=14,
         num_pos_freq=10,
     ),
 )
