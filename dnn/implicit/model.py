@@ -84,7 +84,7 @@ class NeRD:
         max_dir_freq = None,
         num_pos_freq = 10,
         max_pos_freq = None,
-        output_bias_init = 0.,
+        output_bias_init = -3.,
         mlp_activation = "relu",
     )
 
