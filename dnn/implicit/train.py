@@ -107,16 +107,15 @@ class Trainer:
         self.ref_T_cam_k = Pose3DVar(Pose3D.identity(size=(self.data.p.num_images - 1,)))
 
         # generate ground truth poses
-        cam_poses_gt = []
-        cam_intrinsics = self.data.p.cam.to_matrix().numpy()
+        self.cam_intrinsics = self.data.p.cam.to_matrix().numpy()
+        self.cam_poses_gt = o3d.geometry.LineSet()
         for i in range(self.data.p.num_images):
             cam = o3d.geometry.LineSet.create_camera_visualization(
                 self.data.p.img_size[0], self.data.p.img_size[1],
-                cam_intrinsics, self.data.data_dict["ref_T_cams"][i].to_matrix().numpy(),
+                self.cam_intrinsics, self.data.data_dict["ref_T_cams"][i].inv().to_matrix().numpy(),
             )
-            cam.paint_uniform_color((1.0, 0.0, 0.0))
-            cam_poses_gt.append(cam)
-        self.cam_poses_gt = to_dict_batch(cam_poses_gt)
+            cam.paint_uniform_color((0.0, 1.0, 0.0))
+            self.cam_poses_gt += cam
 
     def compute_loss(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         # transform from cam to reference
@@ -177,7 +176,7 @@ class Trainer:
         alpha = (epoch - self.p.freq_mask.start) / (self.p.freq_mask.end - self.p.freq_mask.start)
         return tf.clip_by_value(alpha, 0., 1.)
 
-    @tf.function(jit_compile=True)
+    @tf.function(jit_compile=False)
     def train_step(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         self.lr.assign(self.lr_schedule(self.global_step))
 
@@ -266,13 +265,42 @@ class Trainer:
                     tf.summary.histogram("R", meta_dict["grad_R"], step=self.global_step)
                     tf.summary.histogram("t", meta_dict["grad_t"], step=self.global_step)
 
+    def pose_visualization_step(self, logdir: str) -> None:
+        ref_T_cam_k = self.ref_T_cam_k.to_Pose3D()
+        cam_poses_pred = o3d.geometry.LineSet()
+        for i in range(1, self.data.p.num_images):
+            cam = o3d.geometry.LineSet.create_camera_visualization(
+                self.data.p.img_size[0], self.data.p.img_size[1],
+                self.cam_intrinsics, ref_T_cam_k[i-1].inv().to_matrix()
+            )
+            cam.paint_uniform_color((1.0, 0.0, 0.0))
+            cam_poses_pred += cam
+
+        summary.add_3d("pose gt", to_dict_batch([self.cam_poses_gt]),
+                       step=self.global_step, logdir=logdir)
+        summary.add_3d("pose pred", to_dict_batch([cam_poses_pred]),
+                       step=self.global_step, logdir=logdir)
+
+        # generate correspondence lines
+        corr = o3d.geometry.LineSet()
+        points_gt = self.data.data_dict["ref_T_cams"][1:self.data.p.num_images].t.numpy()
+        points_pred = ref_T_cam_k.t.numpy()
+        corr.points = o3d.utility.Vector3dVector(np.concatenate([points_gt, points_pred], axis=0))
+        corr.lines = o3d.utility.Vector2iVector(
+            np.column_stack([np.arange(points_pred.shape[0], dtype=int),
+                             np.arange(points_pred.shape[0], dtype=int) + points_pred.shape[0]]))
+        corr.paint_uniform_color((0.0, 0.0, 1.0))
+        summary.add_3d("correspondence", to_dict_batch([corr]), step=self.global_step, logdir=logdir)
+
     def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
         ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
         log_dir = os.path.join(output_dir, sess_dir, "logs")
+        pose_dir = os.path.join(log_dir, "pose")
 
         train_writer = tf.summary.create_file_writer(os.path.join(log_dir, "train"))
         val_writer = tf.summary.create_file_writer(os.path.join(log_dir, "validation"))
+        pose_writer = tf.summary.create_file_writer(pose_dir)
 
         if weights is not None:
             self.model.load_weights(os.path.join(weights, "model"))
@@ -286,10 +314,10 @@ class Trainer:
                              max_outputs=6)
 
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
-            with train_writer.as_default():
-                summary.add_3d("pose_viz", self.cam_poses_gt,
-                               step=self.global_step, logdir=os.path.join(log_dir, "train"))
+            with pose_writer.as_default():
+                self.pose_visualization_step(pose_dir)
 
+            with train_writer.as_default():
                 freq_alpha = self.freq_alpha_schedule(epoch)
                 tf.summary.scalar("freq_alpha", freq_alpha, step=self.global_step)
                 self.model.set_freq_alpha(freq_alpha)
