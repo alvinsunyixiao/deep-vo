@@ -35,15 +35,15 @@ def parse_args() -> argparse.Namespace:
 
 class PseudoSE3Adam(tf.Module):
     def __init__(self,
-        lr: T.Union[float, tf.Variable] = 1e-3,
+        lr: T.Union[float, tf.Variable, tf.Tensor] = 1e-3,
         beta1: float = 0.9,
         beta2: float = 0.999,
-        eps: float = 1e-7
+        eps: float = 1e-5,
     ) -> None:
         super().__init__()
 
         self.lr = lr
-        if isinstance(lr, float):
+        if not isinstance(lr, tf.Variable):
             self.lr = tf.Variable(lr, trainable=False)
 
         self.beta1 = beta1
@@ -51,24 +51,22 @@ class PseudoSE3Adam(tf.Module):
         self.eps = eps
         self.is_built = False
 
-    def apply_gradients(self, pose_var: Pose3DVar, grad_se3: tf.Tensor) -> None:
+    def apply_gradients(self, quat: tf.Variable, grad_R: tf.Tensor) -> None:
         if not self.is_built:
-            self.mt = tf.Variable(tf.zeros_like(grad_se3), trainable=False)
-            self.vt = tf.Variable(tf.zeros_like(grad_se3), trainable=False)
+            self.mt = tf.Variable(tf.zeros_like(grad_R), trainable=False)
+            self.vt = tf.Variable(tf.zeros_like(grad_R), trainable=False)
             self.t = tf.Variable(0.0, trainable=False)
             self.is_built = True
 
         self.t.assign_add(1.)
-        self.mt.assign(self.beta1 * self.mt + (1 - self.beta1) * grad_se3)
-        self.vt.assign(self.beta2 * self.vt + (1 - self.beta2) * tf.square(grad_se3))
+        self.mt.assign(self.beta1 * self.mt + (1 - self.beta1) * grad_R)
+        self.vt.assign(self.beta2 * self.vt + (1 - self.beta2) * tf.square(grad_R))
         mt_hat = self.mt / (1. - tf.pow(self.beta1, self.t))
         vt_hat = self.vt / (1. - tf.pow(self.beta2, self.t))
 
-        pose_old = pose_var.to_Pose3D()
-        R_new = pose_old.R @ Rot3D.from_so3(-self.lr * mt_hat[:, :3] / (tf.sqrt(vt_hat[:, :3]) + self.eps))
-        t_new = pose_old.t - self.lr * mt_hat[:, 3:] / (tf.sqrt(vt_hat[:, 3:]) + self.eps)
-        pose_new = Pose3D(R_new, t_new)
-        pose_var.update(pose_new)
+        R_old = Rot3D(quat)
+        R_new = R_old @ Rot3D.from_so3(-self.lr * mt_hat / (tf.sqrt(vt_hat) + self.eps))
+        quat.assign(R_new.quat)
 
     def set_lr(self, lr: float) -> None:
         self.lr.assign(lr)
@@ -106,7 +104,7 @@ class Trainer:
         #TODO(alvin): make pose lr a seperate variable
         self.pose_optimizer = PseudoSE3Adam(self.lr)
 
-        self.ref_T_cam_k = Pose3DVar(Pose3D.identity(size=(self.data.p.num_images,)))
+        self.ref_T_cam_k = Pose3DVar(Pose3D.identity(size=(self.data.p.num_images - 1,)))
 
         # generate ground truth poses
         cam_poses_gt = []
@@ -126,7 +124,8 @@ class Trainer:
             data_dict["points_cam_b3"])
 
         if self.p.estimate_pose:
-            ref_T_cam_b = tf.gather(self.ref_T_cam_k.to_Pose3D(), data_dict["img_idx_b"])
+            ref_T_cam_k = tf.concat([Pose3D.identity((1,)), self.ref_T_cam_k.to_Pose3D()], axis=0)
+            ref_T_cam_b = tf.gather(ref_T_cam_k, data_dict["img_idx_b"])
         else:
             ref_T_cam_b = data_dict["ref_T_cam_b"]
 
@@ -135,16 +134,16 @@ class Trainer:
 
         # MLP inference
         mlp_input = self.model.input_encoding(pos_ref_b3, dir_ref_b3)
-        range_pred_b1 = tf.maximum(self.model.mlp(mlp_input), 0.1) # min range 0.1 meters
+        range_pred_b1 = self.model.mlp(mlp_input)
         range_pred_b = range_pred_b1[:, 0]
 
-        cos_dir_diff_b = tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])
-        cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
-        forward_mask_b = (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff))
-        loss_b = tf.boolean_mask(tf.abs(range_pred_b - range_gt_b) / range_gt_b, forward_mask_b)
+        #cos_dir_diff_b = tf.einsum("ij,ij->i", dir_cam_b3, data_dict["directions_cam_b3"])
+        #cos_dir_diff_b = tf.clip_by_value(cos_dir_diff_b, -1., 1.)
+        #forward_mask_b = (tf.math.acos(cos_dir_diff_b) <= math.radians(self.p.loss.max_angle_diff))
+        loss_b = tf.abs(range_pred_b - range_gt_b) / range_gt_b
 
         # pose loss for logging
-        cams_T_cams_pred = self.data.data_dict["ref_T_cams"][:self.data.p.num_images].inv() @ \
+        cams_T_cams_pred = self.data.data_dict["ref_T_cams"][1:self.data.p.num_images].inv() @ \
                            self.ref_T_cam_k.to_Pose3D()
         pose_delta = cams_T_cams_pred.to_se3()
 
@@ -178,7 +177,7 @@ class Trainer:
         alpha = (epoch - self.p.freq_mask.start) / (self.p.freq_mask.end - self.p.freq_mask.start)
         return tf.clip_by_value(alpha, 0., 1.)
 
-    @tf.function(jit_compile=False)
+    @tf.function(jit_compile=True)
     def train_step(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         self.lr.assign(self.lr_schedule(self.global_step))
 
@@ -188,27 +187,25 @@ class Trainer:
         self.global_step.assign_add(1)
 
         variables = {
-            "model": self.model.mlp.trainable_variables,
-            "pose": [self.ref_T_cam_k.quat, self.ref_T_cam_k.t],
+            "normal": self.model.mlp.trainable_variables + [self.ref_T_cam_k.t],
+            "quat": self.ref_T_cam_k.quat,
         }
         grad = tape.gradient(meta_dict["loss"], variables)
-        self.optimizer.apply_gradients(zip(grad["model"], variables["model"]))
-        meta_dict.update(data_dict, grad_model=grad["model"])
+        self.optimizer.apply_gradients(zip(grad["normal"], variables["normal"]))
+        meta_dict.update(data_dict, grad_model=grad["normal"])
 
         # update pose parameter
         if self.p.estimate_pose:
             ref_T_cam_k = self.ref_T_cam_k.to_Pose3D()
 
-            grad_R_tanget = tf.expand_dims(grad["pose"][0], axis=-2) @ \
+            grad_R_tanget = tf.expand_dims(grad["quat"], axis=-2) @ \
                             ref_T_cam_k.R.storage_D_tangent()
-            grad_R_tanget = grad_R_tanget[..., 0, :]
-            grad_t = tf.convert_to_tensor(grad["pose"][1])
-            grad_se3 = tf.concat([grad_R_tanget, grad_t], axis=-1)
-            self.pose_optimizer.apply_gradients(self.ref_T_cam_k, grad_se3)
+            grad_R_tanget = tf.squeeze(grad_R_tanget, axis=-2)
+            self.pose_optimizer.apply_gradients(self.ref_T_cam_k.quat, grad_R_tanget)
 
             meta_dict.update(
                 grad_R=grad_R_tanget,
-                grad_t=grad_t,
+                grad_t=grad["normal"][-1],
             )
 
         return meta_dict
@@ -269,14 +266,10 @@ class Trainer:
                     tf.summary.histogram("R", meta_dict["grad_R"], step=self.global_step)
                     tf.summary.histogram("t", meta_dict["grad_t"], step=self.global_step)
 
-    def pose_vis_step(self) -> None:
-        coord = o3d.geometry.TriangleMesh.create_coordinate_frame()
-
     def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
         ckpt_dir = os.path.join(output_dir, sess_dir, "ckpts")
         log_dir = os.path.join(output_dir, sess_dir, "logs")
-        pose_log_dir = os.path.join(log_dir, "pose")
 
         train_writer = tf.summary.create_file_writer(os.path.join(log_dir, "train"))
         val_writer = tf.summary.create_file_writer(os.path.join(log_dir, "validation"))
