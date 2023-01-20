@@ -280,7 +280,6 @@ class Trainer:
 
         train_writer = tf.summary.create_file_writer(os.path.join(log_dir, "train"))
         val_writer = tf.summary.create_file_writer(os.path.join(log_dir, "validation"))
-        pose_writer = tf.summary.create_file_writer(pose_log_dir)
 
         if weights is not None:
             self.model.load_weights(os.path.join(weights, "model"))
@@ -294,11 +293,10 @@ class Trainer:
                              max_outputs=6)
 
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
-            with pose_writer.as_default():
-                summary.add_3d("pose viz", self.cam_poses_gt,
-                               step=self.global_step, logdir=pose_log_dir)
-
             with train_writer.as_default():
+                summary.add_3d("pose_viz", self.cam_poses_gt,
+                               step=self.global_step, logdir=os.path.join(log_dir, "train"))
+
                 freq_alpha = self.freq_alpha_schedule(epoch)
                 tf.summary.scalar("freq_alpha", freq_alpha, step=self.global_step)
                 self.model.set_freq_alpha(freq_alpha)
