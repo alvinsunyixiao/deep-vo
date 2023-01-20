@@ -177,7 +177,7 @@ class Trainer:
         alpha = (epoch - self.p.freq_mask.start) / (self.p.freq_mask.end - self.p.freq_mask.start)
         return tf.clip_by_value(alpha, 0., 1.)
 
-    @tf.function(jit_compile=True)
+    @tf.function(jit_compile=False)
     def train_step(self, data_dict: T_DATA_DICT) -> T_DATA_DICT:
         self.lr.assign(self.lr_schedule(self.global_step))
 
