@@ -54,12 +54,12 @@ class PointLoader:
         )
 
         # parse data
-        inv_range_imgs = []
+        range_imgs = []
         color_imgs = []
         ref_T_cams = []
 
         points_cam = []
-        inv_ranges = []
+        ranges = []
         colors = []
         img_indics = []
         for i, data_dict in enumerate(data_dicts):
@@ -70,9 +70,8 @@ class PointLoader:
             # convert planar depth to perspective depth
             p_cam = cam.unproject(depth)
             range_img = tf.linalg.norm(p_cam, axis=-1, keepdims=True)
-            inv_range_img = 1. / range_img
 
-            inv_range_imgs.append(inv_range_img)
+            range_imgs.append(range_img)
             color_imgs.append(img)
             # transform from NED to EDN
             ref_T_cams.append(ned_T_edn.inv() @ \
@@ -86,17 +85,17 @@ class PointLoader:
             grid_k2 = tf.gather_nd(grid_hw2, valid_indics_yx_k2)
             depth_k1 = tf.gather_nd(depth, valid_indics_yx_k2)
             points_cam.append(tf.gather_nd(p_cam, valid_indics_yx_k2))
-            inv_ranges.append(tf.gather_nd(inv_range_img, valid_indics_yx_k2))
+            ranges.append(tf.gather_nd(range_img, valid_indics_yx_k2))
             colors.append(tf.gather_nd(img, valid_indics_yx_k2))
             img_indics.append(tf.ones(valid_indics_yx_k2.shape[0], dtype=tf.int64) * i)
 
         points_cam = tf.concat(points_cam, axis=0)
         self.data_dict = {
-            "inv_range_imgs": tf.stack(inv_range_imgs),
+            "range_imgs": tf.stack(range_imgs),
             "color_imgs": tf.stack(color_imgs),
             "ref_T_cams": tf.stack(ref_T_cams),
             "points_cam": points_cam,
-            "inv_ranges": tf.concat(inv_ranges, axis=0),
+            "ranges": tf.concat(ranges, axis=0),
             "colors": tf.concat(colors, axis=0),
             "directions_cam": tf.linalg.normalize(points_cam, axis=-1)[0],
             "img_indics": tf.concat(img_indics, axis=0),
@@ -121,20 +120,20 @@ class PointLoader:
             "points_cam_b3": tf.gather(data_dict["points_cam"], rand_idx_b),
             "colors_b3": tf.gather(data_dict["colors"], rand_idx_b),
             "directions_cam_b3": tf.gather(data_dict["directions_cam"], rand_idx_b),
-            "inv_ranges_b1": tf.gather(data_dict["inv_ranges"], rand_idx_b),
+            "ranges_b1": tf.gather(data_dict["ranges"], rand_idx_b),
             "img_idx_b": img_idx_b,
             "ref_T_cam_b": ref_T_cam_b,
             "virtual_idx": rand_img_idx,
             "ref_T_virtual": tf.gather(data_dict["ref_T_cams"], rand_img_idx),
             "color_virtual_hw3": tf.gather(data_dict["color_imgs"], rand_img_idx),
-            "inv_range_virtual_hw1": tf.gather(data_dict["inv_range_imgs"], rand_img_idx),
+            "range_virtual_hw1": tf.gather(data_dict["range_imgs"], rand_img_idx),
         }
 
     def generate_samples(self, points_cam_b3: tf.Tensor) -> T.Tuple[tf.Tensor, ...]:
         random_points_b3 = tf.random.normal((self.p.batch_size, 3), stddev=self.p.perturb_scale)
         rand_t_point_b3 = points_cam_b3 - random_points_b3
         directions_b3, range_b1 = tf.linalg.normalize(rand_t_point_b3, axis=-1)
-        inv_range_b = 1. / range_b1[..., 0]
+        range_b = range_b1[..., 0]
 
-        return random_points_b3, directions_b3, inv_range_b
+        return random_points_b3, directions_b3, range_b
 

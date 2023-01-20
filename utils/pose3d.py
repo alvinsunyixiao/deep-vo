@@ -11,6 +11,34 @@ from tensorflow_graphics.geometry.transformation import \
 
 from utils.tf_utils import cast_if_needed
 
+class Rot3DVar(tf.Module):
+    def __init__(self, R: Rot3D, name: T.Optional[str] = None) -> None:
+        super().__init__(name=name)
+        self.quat = tf.Variable(R.quat, name="quat")
+
+    @tf.function
+    def to_Rot3D(self, renormalize: bool = False) -> Rot3D:
+        return Rot3D(self.quat, renormalize=renormalize)
+
+    @tf.function
+    def update(self, R: Rot3D) -> None:
+        self.quat.assign(R.quat)
+
+class Pose3DVar(tf.Module):
+    def __init__(self, pose: Pose3D, name: T.Optional[str] = None) -> None:
+        super().__init__(name=name)
+        self.quat = tf.Variable(pose.R.quat, name="quat")
+        self.t = tf.Variable(pose.t, name="t")
+
+    @tf.function
+    def to_Pose3D(self, renormalize: bool = False) -> Pose3D:
+        return Pose3D(Rot3D(self.quat, renormalize=renormalize), self.t)
+
+    @tf.function
+    def update(self, pose: Pose3D) -> None:
+        self.quat.assign(pose.R.quat)
+        self.t.assign(pose.t)
+
 class Rot3D(tf.experimental.BatchableExtensionType):
     """
     3D rotation represented with a quaternion [x, y, z, w]
@@ -60,9 +88,6 @@ class Rot3D(tf.experimental.BatchableExtensionType):
         if hasattr(self.quat, "numpy"):
             quat = quat.numpy()
         return f"Rot3D(quat={quat})"
-
-    def watch(self, tape: tf.GradientTape) -> None:
-        tape.watch(self.quat)
 
     def storage_D_tangent(self) -> tf.Tensor:
         half_x = self.quat[..., 0] / 2.
@@ -182,10 +207,6 @@ class Pose3D(tf.experimental.BatchableExtensionType):
         if hasattr(t, "numpy"):
             t = t.numpy()
         return f"Pose3D(R={self.R}, t={t})"
-
-    def watch(self, tape: tf.GradientTape) -> None:
-        self.R.watch(tape)
-        tape.watch(self.t)
 
     def inv(self) -> Pose3D:
         R_inv = self.R.inv()

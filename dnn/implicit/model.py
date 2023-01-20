@@ -84,7 +84,7 @@ class NeRD:
         max_dir_freq = None,
         num_pos_freq = 10,
         max_pos_freq = None,
-        output_bias_init = -3.,
+        output_bias_init = 0.,
         mlp_activation = "relu",
     )
 
@@ -125,7 +125,7 @@ class NeRD:
 
         mlp_input = self.input_encoding(position_khw3, unit_ray_khw3)
 
-        return self.mlp(mlp_input)
+        return 1. / self.mlp(mlp_input)
 
     def frequency_encoding(self,
         data_bn: tf.Tensor,
@@ -140,9 +140,13 @@ class NeRD:
         freq_l = 2. ** (freq_idx_l / num_freqs * max_freqs) * np.pi
         spectrum_bnl = data_bn[..., tf.newaxis] * freq_l
 
-        freq_mask_l = (freq_idx_l < self.freq_alpha * num_freqs)
-        sin_spec_bnl = tf.where(freq_mask_l, x=tf.sin(spectrum_bnl), y=tf.zeros_like(spectrum_bnl))
-        cos_spec_bnl = tf.where(freq_mask_l, x=tf.cos(spectrum_bnl), y=tf.zeros_like(spectrum_bnl))
+        alpha = self.freq_alpha * num_freqs
+        freq_mask_l = tf.cast(freq_idx_l + 1 <= alpha, tf.float32)
+        freq_mask_l = tf.where((freq_idx_l <= alpha) & (freq_idx_l + 1. > alpha),
+                               x=(1. - tf.cos((freq_idx_l - alpha) * np.pi)) / 2.,
+                               y=freq_mask_l)
+        sin_spec_bnl = freq_mask_l * tf.sin(spectrum_bnl)
+        cos_spec_bnl = freq_mask_l * tf.cos(spectrum_bnl)
 
         batch_shp = tf.shape(data_bn)[:-1]
         spec_shp = tf.concat([batch_shp, [-1]], axis=0)
@@ -159,7 +163,7 @@ class NeRD:
 
     def input_encoding(self, position_k3: tf.Tensor, unit_ray_k3: tf.Tensor) -> tf.Tensor:
         # TODO: make this a parameter
-        # position_k3 /= 10.
+        position_k3 /= 15.
         return tf.concat([
             self.directional_encoding(unit_ray_k3),
             self.positional_encoding(position_k3),
