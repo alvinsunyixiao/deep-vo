@@ -265,7 +265,7 @@ class Trainer:
                     tf.summary.histogram("R", meta_dict["grad_R"], step=self.global_step)
                     tf.summary.histogram("t", meta_dict["grad_t"], step=self.global_step)
 
-    def pose_visualization_step(self, logdir: str) -> None:
+    def pose_visualization_step(self, logdir: str, epoch: int) -> None:
         ref_T_cam_k = self.ref_T_cam_k.to_Pose3D()
         cam_poses_pred = o3d.geometry.LineSet()
         for i in range(1, self.data.p.num_images):
@@ -277,9 +277,9 @@ class Trainer:
             cam_poses_pred += cam
 
         summary.add_3d("pose gt", to_dict_batch([self.cam_poses_gt]),
-                       step=self.global_step, logdir=logdir)
+                       step=self.epoch, logdir=logdir)
         summary.add_3d("pose pred", to_dict_batch([cam_poses_pred]),
-                       step=self.global_step, logdir=logdir)
+                       step=self.epoch, logdir=logdir)
 
         # generate correspondence lines
         corr = o3d.geometry.LineSet()
@@ -290,7 +290,7 @@ class Trainer:
             np.column_stack([np.arange(points_pred.shape[0], dtype=int),
                              np.arange(points_pred.shape[0], dtype=int) + points_pred.shape[0]]))
         corr.paint_uniform_color((0.0, 0.0, 1.0))
-        summary.add_3d("correspondence", to_dict_batch([corr]), step=self.global_step, logdir=logdir)
+        summary.add_3d("correspondence", to_dict_batch([corr]), step=epoch, logdir=logdir)
 
     def run(self, output_dir: str, weights: T.Optional[str] = None, debug: bool = False) -> None:
         sess_dir = time.strftime("sess_%y-%m-%d_%H-%M-%S")
@@ -315,7 +315,7 @@ class Trainer:
 
         for epoch in trange(self.p.num_epochs, desc="Epoch"):
             with pose_writer.as_default():
-                self.pose_visualization_step(pose_dir)
+                self.pose_visualization_step(pose_dir, epoch)
 
             with train_writer.as_default():
                 freq_alpha = self.freq_alpha_schedule(epoch)
