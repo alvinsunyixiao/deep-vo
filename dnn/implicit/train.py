@@ -277,9 +277,9 @@ class Trainer:
             cam_poses_pred += cam
 
         summary.add_3d("pose gt", to_dict_batch([self.cam_poses_gt]),
-                       step=self.epoch, logdir=logdir)
+                       step=epoch, logdir=logdir)
         summary.add_3d("pose pred", to_dict_batch([cam_poses_pred]),
-                       step=self.epoch, logdir=logdir)
+                       step=epoch, logdir=logdir)
 
         # generate correspondence lines
         corr = o3d.geometry.LineSet()
