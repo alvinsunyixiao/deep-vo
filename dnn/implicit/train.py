@@ -100,7 +100,8 @@ class Trainer:
 
         self.global_step = tf.Variable(0, trainable=False, dtype=tf.int64)
         self.lr = tf.Variable(0., trainable=False, dtype=tf.float32)
-        self.optimizer = tfk.optimizers.Adam(self.lr)
+        #TODO(alvin): the new optimizer suffers from performance loss
+        self.optimizer = tfk.optimizers.legacy.Adam(self.lr)
         #TODO(alvin): make pose lr a seperate variable
         self.pose_optimizer = PseudoSE3Adam(self.lr)
 
