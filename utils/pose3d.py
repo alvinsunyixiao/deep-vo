@@ -324,27 +324,35 @@ class Pose3D(tf.experimental.BatchableExtensionType):
 
         return Pose3D(Rot3D.random(max_angle, size, dtype), t, dtype=dtype)
 
+class RandomRot3DGen:
+    def __init__(self, min_rp: T.Tuple[float, float], max_rp: T.Tuple[float, float]) -> None:
+        min_rpy = np.array(min_rp + (-np.pi,), dtype=float)
+        max_rpy = np.array(max_rp + (np.pi,), dtype=float)
+        self.rpy_gen = functools.partial(np.random.uniform, low=min_rpy, high=max_rpy)
+
+    def __call__(self) -> Rot3D:
+        rpy = self.rpy_gen()
+
+        return Rot3D(quaternion.from_euler(rpy))
+
 class RandomPose3DGen:
     def __init__(self,
         min_pos: T.Tuple[float, float, float],
         max_pos: T.Tuple[float, float, float],
         min_rp: T.Tuple[float, float],
         max_rp: T.Tuple[float, float],
-    ):
+    ) -> None:
         min_pos = np.array(min_pos, dtype=float)
         max_pos = np.array(max_pos, dtype=float)
         self.pos_gen = functools.partial(np.random.uniform, low=min_pos, high=max_pos)
 
-        min_rpy = np.array(min_rp + (-np.pi,), dtype=float)
-        max_rpy = np.array(max_rp + (np.pi,), dtype=float)
-        self.rpy_gen = functools.partial(np.random.uniform, low=min_rpy, high=max_rpy)
+        self.rot_gen = RandomRot3DGen(min_rp, max_rp)
 
     def __call__(self) -> Pose3D:
         pos = self.pos_gen()
-        rpy = self.rpy_gen()
 
         return Pose3D(
             t=pos,
-            R=Rot3D(quaternion.from_euler(rpy)),
+            R=self.rot_gen(),
         )
 

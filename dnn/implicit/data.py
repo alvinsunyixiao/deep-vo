@@ -26,6 +26,16 @@ class PointLoader:
         min_depth=0.2,
         perturb_scale=2.0,
         epoch_size=3000,
+        max_range=1000.,
+        # default to ned_T_edn
+        data_T_edn = Pose3D(
+            R = Rot3D.from_matrix([
+                [0., 0., 1.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+            ]),
+            t = tf.zeros(3),
+        )
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
@@ -42,16 +52,6 @@ class PointLoader:
 
         # pick the first image to be reference pose
         world_T_ref = Pose3D.from_storage(data_dicts[0]["pose"])
-
-        # transform from NED to EDN coordinate convention
-        ned_T_edn = Pose3D(
-            R = Rot3D.from_matrix([
-                [0., 0., 1.],
-                [1., 0., 0.],
-                [0., 1., 0.],
-            ]),
-            t = tf.zeros(3),
-        )
 
         # parse data
         range_imgs = []
@@ -73,10 +73,10 @@ class PointLoader:
 
             range_imgs.append(range_img)
             color_imgs.append(img)
-            # transform from NED to EDN
-            ref_T_cams.append(ned_T_edn.inv() @ \
+            # transform from data coordinate frame to EDN
+            ref_T_cams.append(self.p.data_T_edn.inv() @ \
                               world_T_ref.inv() @ Pose3D.from_storage(data_dict["pose"]) @ \
-                              ned_T_edn)
+                              self.p.data_T_edn)
 
             # use samples that live in valid depth range
             valid_indics_yx_k2 = tf.where(depth[..., 0] >= self.p.min_depth)

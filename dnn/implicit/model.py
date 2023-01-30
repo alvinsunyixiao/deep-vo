@@ -86,6 +86,7 @@ class NeRD:
         max_pos_freq = None,
         output_bias_init = 0.,
         mlp_activation = "relu",
+        output_activation = "softplus",
     )
 
     def __init__(self, params: ParamDict = DEFAULT_PARAMS) -> None:
@@ -95,7 +96,7 @@ class NeRD:
             num_layers=self.p.mlp_layers,
             num_hidden=self.p.mlp_width,
             activation=self.p.mlp_activation,
-            output_activation="softplus",
+            output_activation=self.p.output_activation,
             output_bias_initializer=tfk.initializers.Constant(self.p.output_bias_init),
             weight_decay=self.p.mlp_weight_decay,
         )
@@ -110,7 +111,7 @@ class NeRD:
         assert alpha >= 0. and alpha <= 1., "alpha must be in range [0, 1]"
         self.freq_alpha.assign(alpha)
 
-    def render_inv_range(self,
+    def render_range(self,
         img_size: T.Tuple[int, int],
         camera: PinholeCam,
         world_T_cam_k: Pose3D = Pose3D.identity(),
@@ -125,7 +126,7 @@ class NeRD:
 
         mlp_input = self.input_encoding(position_khw3, unit_ray_khw3)
 
-        return 1. / self.mlp(mlp_input)
+        return self.mlp(mlp_input)
 
     def frequency_encoding(self,
         data_bn: tf.Tensor,
